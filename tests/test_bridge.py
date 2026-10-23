@@ -101,3 +101,27 @@ def test_list_models_reads_the_provider_model_table(fake):
     models = GentleShell(binary=str(run(MODELS_TABLE))).list_models()
     assert models == ["claude-bridge/claude-haiku-5-5", "openai-codex/gpt-6-luna"]
     assert "--list-models" in argv()
+
+
+def test_cancel_kills_a_running_gentle_shell(fake):
+    import threading
+    import time
+
+    run, _ = fake
+    gs = GentleShell(binary=str(run('{"name": "x"}', sleep=30)))
+    errors = []
+
+    def call():
+        try:
+            gs.interpret("x", Style())
+        except InterpretError as e:
+            errors.append(str(e))
+
+    t = threading.Thread(target=call)
+    t.start()
+    time.sleep(0.5)
+    t0 = time.monotonic()
+    gs.cancel()
+    t.join(5)
+    assert not t.is_alive() and time.monotonic() - t0 < 2
+    assert errors == ["cancelled"]

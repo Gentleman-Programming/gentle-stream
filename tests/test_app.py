@@ -28,6 +28,9 @@ class FakeShell:
     def list_models(self):
         return self.models
 
+    def cancel(self):
+        pass
+
 
 def make_app(shell, **kw):
     player = Player(Engine(Style(name="Midnight Rain"), seed=1), stream_factory=lambda **k: FakeStream(**k),
@@ -169,3 +172,29 @@ async def test_the_app_uses_the_gentleman_programming_theme():
         theme = app.current_theme
         assert (theme.primary, theme.background, theme.error) == ("#ff76c3", "#140a12", "#ff718f")
         assert app.query_one("#title").styles.color.hex.lower() == "#ff76c3"
+
+
+@pytest.mark.asyncio
+async def test_quitting_during_an_interpretation_cancels_it_right_away():
+    import time
+
+    shell = FakeShell(answer={"name": "Late"})
+    shell.release.clear()
+    shell.cancel = shell.release.set            # cancelling unblocks the in-flight call
+    app, player = make_app(shell)
+    async with app.run_test() as pilot:
+        await pilot.press("slash", *"rain", "enter")
+        await pilot.pause(0.1)
+        t0 = time.monotonic()
+    assert time.monotonic() - t0 < 2
+    assert shell.release.is_set()
+
+
+@pytest.mark.asyncio
+async def test_an_error_with_brackets_is_shown_literally():
+    app, _ = make_app(FakeShell(error="bad [model] id"))
+    async with app.run_test() as pilot:
+        await pilot.press("slash", *"x", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert "bad [model] id" in text(app, "#status")

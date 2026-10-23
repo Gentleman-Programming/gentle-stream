@@ -6,9 +6,12 @@ chose, asks for a JSON object describing the music, and validates it into a `Sty
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 
 from .style import CHORD_INSTRUMENTS, DRUMS, KEYS, LEAD_INSTRUMENTS, MODES, Style
 
@@ -62,19 +65,51 @@ class GentleShell:
     binary: str = "gentle-shell"
     model: str | None = None
     timeout: float = 120.0
+    _procs: set = field(default_factory=set, init=False, repr=False)
+    _cancelled: set = field(default_factory=set, init=False, repr=False)
+    _procs_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def _run(self, args: list[str]) -> str:
         try:
-            proc = subprocess.run([self.binary, "--", *args], capture_output=True, text=True, timeout=self.timeout,
-                                  stdin=subprocess.DEVNULL)
+            # own process group: gentle-shell is a launcher that spawns pi, and cancel() must stop both
+            proc = subprocess.Popen([self.binary, "--", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    stdin=subprocess.DEVNULL, text=True, start_new_session=True)
         except FileNotFoundError:
             raise InterpretError(f"{self.binary} not found: install Gentle Shell or pass --gentle-shell") from None
+        with self._procs_lock:
+            self._procs.add(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
+            self._kill(proc)
+            proc.communicate()
             raise InterpretError(f"gentle-shell timed out after {self.timeout:g}s") from None
+        finally:
+            with self._procs_lock:
+                self._procs.discard(proc)
+                cancelled = proc in self._cancelled
+                self._cancelled.discard(proc)
+        if cancelled:
+            raise InterpretError("cancelled")
         if proc.returncode != 0:
-            detail = (proc.stderr.strip() or proc.stdout.strip() or f"exit code {proc.returncode}").splitlines()
+            detail = (stderr.strip() or stdout.strip() or f"exit code {proc.returncode}").splitlines()
             raise InterpretError(detail[-1] if detail else f"exit code {proc.returncode}")
-        return proc.stdout
+        return stdout
+
+    @staticmethod
+    def _kill(proc: subprocess.Popen) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def cancel(self) -> None:
+        """Stop every running gentle-shell call; each one raises InterpretError("cancelled")."""
+        with self._procs_lock:
+            procs = list(self._procs)
+            self._cancelled.update(procs)
+        for proc in procs:
+            self._kill(proc)
 
     def command(self, prompt: str) -> list[str]:
         args = ["-p", *QUIET_FLAGS, "--thinking", "off"]

@@ -9,6 +9,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.markup import escape
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -116,7 +117,7 @@ class ModelPicker(ModalScreen[str | None]):
         try:
             models = self.shell.list_models()
         except InterpretError as e:
-            self.app.call_from_thread(self.query_one("#picker-status", Static).update, f"Could not list models: {e}")
+            self.app.call_from_thread(self.query_one("#picker-status", Static).update, f"Could not list models: {escape(str(e))}")
             return
         self.app.call_from_thread(self._show, models)
 
@@ -193,6 +194,7 @@ class StreamApp(App):
             self._request(self.initial_mood)
 
     def on_unmount(self) -> None:
+        self.shell.cancel()  # a running gentle-shell would otherwise keep the process alive after quit
         self.player.close()
 
     # ------------------------------------------------------------ display
@@ -257,7 +259,7 @@ class StreamApp(App):
             style = self.shell.interpret(mood, self.player.engine.style)
         except InterpretError as e:
             if not worker.is_cancelled:
-                self.call_from_thread(self._status, f"[$error]Could not interpret the mood:[/] {e}")
+                self.call_from_thread(self._status, f"[$error]Could not interpret the mood:[/] {escape(str(e))}")
             return
         if worker.is_cancelled:
             return
