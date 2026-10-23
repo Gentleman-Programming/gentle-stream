@@ -7,23 +7,34 @@ finished bar goes through a master chain whose filters and delay lines keep stat
 bars join seamlessly and the stream can run forever.
 
 What plays in each bar (song form, harmony, melody, counter-melody, bass line) comes from `composer.Composer`;
-this module turns that plan into sound. Style changes and "next" requests are queued from any thread and applied
+this module turns that plan into sound, with the procedural instruments below or, once `gentle-stream
+setup-samples` has installed the FluidR3_GM soundfont, with sampled ones (`samples.SampleInstruments`). The master
+chain adds a convolution reverb and a bus compressor (`mastering`) before the final tape saturation. Style changes and "next" requests are queued from any thread and applied
 at the next bar boundary.
 """
 from __future__ import annotations
 
 import threading
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 from scipy.signal import butter, sosfilt
 
+from . import samples as _samples
 from .composer import Composer
+from .mastering import Compressor, ConvolutionReverb, procedural_ir, soft_clip
 from .style import DEFAULT, KEYS, Style
 
 SR = 44100
 KICK_PATTERNS = ((0, 2), (0, 1.5), (0, 2.5), (0, 1.5, 2))  # quarter-note beats, 0-based
 MASTER_GAIN = 1.6
+IR_SEED = 1
+
+
+@lru_cache(maxsize=16)
+def _ir(space_tenths: int, sr: int) -> np.ndarray:
+    return procedural_ir(space_tenths / 10, sr, IR_SEED)
 
 
 @lru_cache(maxsize=256)
@@ -130,8 +141,14 @@ class Instruments:
 class Engine:
     HEADROOM = 24.0  # seconds of scheduling buffer: longest bar plus the longest note tail
 
-    def __init__(self, style: Style = DEFAULT, seed: int | None = None, sr: int = SR):
+    def __init__(self, style: Style = DEFAULT, seed: int | None = None, sr: int = SR,
+                 samples: bool | str | Path = True):
+        """`samples`: True uses the installed soundfont when FluidSynth is available, a path uses that soundfont,
+        False keeps the procedural instruments. Anything unavailable falls back to procedural."""
         self.sr = sr
+        sf2 = _samples.soundfont_path() if samples is True else (Path(samples) if samples else None)
+        renderer = _samples.load_renderer(sf2, sr) if sf2 is not None else None
+        self._sampled = _samples.SampleInstruments(renderer, np.random.default_rng(0), sr) if renderer else None
         self._lock = threading.Lock()
         self._pending_style: Style | None = None
         self._pending_next = False
@@ -148,6 +165,10 @@ class Engine:
         self._hiss_lp = StatefulFilter(_sos("lowpass", 6000, 0, sr), 2)
         self._tone_cut = None
         self._tone_lp: StatefulFilter | None = None
+        self._send_hp = StatefulFilter(_sos("highpass", 180, 0, sr), 2)
+        self._ir_space: int | None = None
+        self._reverb: ConvolutionReverb | None = None
+        self._comp = Compressor(sr)
         self._start_piece(style)
 
     # ------------------------------------------------------------ control (any thread)
@@ -163,6 +184,10 @@ class Engine:
                 self._pending_next = True
 
     @property
+    def backend(self) -> str:
+        return "procedural" if self._sampled is None else "samples"
+
+    @property
     def bar_seconds(self) -> float:
         return 240.0 / self.style.bpm
 
@@ -171,7 +196,7 @@ class Engine:
         self.style = style
         self.seed = int(self._root_rng.integers(2 ** 31))
         self.rng = np.random.default_rng(self.seed)
-        self.inst = Instruments(self.rng, self.sr)
+        self.inst = self._sampled or Instruments(self.rng, self.sr)
         self.piece += 1
         self.bar = 0
         ton = 48 + KEYS.index(style.key)
@@ -273,6 +298,15 @@ class Engine:
 
     def _master(self, x: np.ndarray) -> np.ndarray:
         s, n, sr = self.style, len(x), self.sr
+        # convolution reverb send (the music only; the tail rings on across bars and style changes)
+        space = int(round(s.space * 10))
+        if space != self._ir_space:
+            if self._reverb is None:
+                self._reverb = ConvolutionReverb(_ir(space, sr))
+            else:
+                self._reverb.set_ir(_ir(space, sr))
+            self._ir_space = space
+        verb = self._reverb(self._send_hp(x)) * (0.08 + 0.22 * s.space)
         # vinyl crackle and hiss
         if s.vinyl > 0:
             cr = np.zeros((n, 2))
@@ -288,7 +322,7 @@ class Engine:
             k = int(d * sr)
             wet += ext[H - k:H - k + n] * g
         self._room_hist = ext[-H:]
-        y = x + self._room_lp(wet) * (0.2 + 1.6 * s.space)
+        y = x + self._room_lp(wet) * (0.2 + 1.6 * s.space) + verb
         # tape wow and flutter: a slowly modulated fractional delay, continuous in absolute time
         W = len(self._wow_hist)
         ext = np.concatenate([self._wow_hist, y])
@@ -308,4 +342,4 @@ class Engine:
         y = self._tone_lp(y)
         if self.samples_out < 0.6 * sr:  # fade in at the very start of the stream
             y *= np.clip((self.samples_out + np.arange(n)) / (0.6 * sr), 0, 1)[:, None]
-        return np.tanh(y * MASTER_GAIN) * 0.9
+        return soft_clip(self._comp(y), MASTER_GAIN, 0.9)

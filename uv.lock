@@ -95,8 +95,14 @@ dependencies = [
     { name = "textual" },
 ]
 
+[package.optional-dependencies]
+samples = [
+    { name = "pyfluidsynth" },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "pyfluidsynth" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -104,13 +110,16 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.4" },
+    { name = "pyfluidsynth", marker = "extra == 'samples'", specifier = ">=1.4.0" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "sounddevice", specifier = ">=0.5.6" },
     { name = "textual", specifier = ">=8.2.8" },
 ]
+provides-extras = ["samples"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pyfluidsynth", specifier = ">=1.4.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]
@@ -267,6 +276,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cb/27/eeb9f307bf07060f3d9f9aa0fb8c15b01bdfded0a941e4b2719c7f94cacd/pycparser-3.12.tar.gz", hash = "sha256:f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6", size = 158785, upload-time = "2026-10-22T13:40:03.56Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl", hash = "sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e", size = 62600, upload-time = "2026-10-22T13:40:02.021Z" },
+]
+
+[[package]]
+name = "pyfluidsynth"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/40/00985fe453bf85cfe1d586f236b97f84401e8ac203588e51840955ed835a/pyfluidsynth-1.4.0.tar.gz", hash = "sha256:6a9e1dbaf469fd11f45184f37ec28e198b1d6495ad74f61dc4a57726b2b1ba31", size = 35128, upload-time = "2026-05-30T16:17:51.451Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/b6/7387ecf46c01df39ed36d9700312a11d8455efe04803b8472a333ff9d51b/pyfluidsynth-1.4.0-py3-none-any.whl", hash = "sha256:93f0a0e8d5b34f974010473f9985fc52e1379e8f316892afeb2de1d759439ca3", size = 23933, upload-time = "2026-05-30T16:17:50.528Z" },
 ]
 
 [[package]]

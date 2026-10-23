@@ -7,12 +7,19 @@ from gentle_stream.engine import SR, Engine
 from gentle_stream.style import Style
 
 
+@pytest.fixture(autouse=True)
+def procedural_backend(tmp_path, monkeypatch):
+    """These tests pin the procedural instruments: no soundfont in an empty cache (samples: test_samples.py)."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+
 def render(engine, bars):
     return [engine.render_bar() for _ in range(bars)]
 
 
 def test_bar_shape_and_length_follow_the_tempo():
     e = Engine(Style(bpm=80), seed=1)
+    assert e.backend == "procedural"
     bar = e.render_bar()
     assert bar.dtype == np.float32 and bar.shape == (int(round(3.0 * SR)), 2)
 
@@ -93,3 +100,15 @@ def test_engine_follows_the_song_form():
     e.queue_next()
     e.render_bar()
     assert e.section == "intro" and e.bar == 1
+
+
+def test_reverb_tail_rings_on_after_the_music_stops():
+    """The convolution reverb keeps its tail across bars: silence the scheduler and the next bar still rings."""
+    e = Engine(Style(space=1.0, vinyl=0.0, drums="busy", energy=1.0), seed=11)
+    render(e, 4)
+    e._schedule_bar = lambda: None
+    e._acc[:] = 0                                  # no note tails left: only the master chain's state remains
+    quiet = e.render_bar()
+    rms = lambda a: float(np.sqrt(np.mean(a ** 2)))
+    late = quiet[int(0.5 * SR):int(0.8 * SR)]      # after the 0.35 s early-reflection room has died out
+    assert rms(late) > 1e-3 and rms(quiet[-SR // 4:]) < rms(late)
