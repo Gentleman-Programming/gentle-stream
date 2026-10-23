@@ -207,3 +207,16 @@ def test_samples_backend_renders_more_than_ten_times_real_time():
     bars = [e.render_bar() for _ in range(30)]
     elapsed = time.perf_counter() - t0
     assert sum(len(b) for b in bars) / SR / elapsed > 10
+
+
+@needs_sf2
+@pytest.mark.parametrize("program", [89, 80, 81, 90, 38])
+def test_a_note_renders_the_same_whatever_was_rendered_before(program):
+    """FluidSynth carries voice state between notes for some presets; every note must be history-free."""
+    r = samples.load_renderer(REAL)
+    first = r.note(0, 0, program, 64, 90, 0.4, 0.3)
+    for other in (81, 0, 38, 90):
+        r.note(0, 0, other, 50, 100, 0.3, 0.2)
+        r.note(9, 128, 0, 36, 100, 0.05, 0.2)
+        again = r.note(0, 0, program, 64, 90, 0.4, 0.3)
+        assert np.array_equal(again, first)

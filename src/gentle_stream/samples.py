@@ -227,6 +227,13 @@ class Renderer:
             if self._programs.get(chan) != (bank, program):
                 self.synth.program_select(chan, self.sfid, bank, program)
                 self._programs[chan] = (bank, program)
+            # Some presets (modulated filters: GM 80, 81, 89, 90, 38...) carry voice state from the previous note
+            # even after all_sounds_off; a fixed throw-away note first makes every render independent of history.
+            self.synth.noteon(chan, 60, 64)
+            self._samples(0.05)
+            self.synth.noteoff(chan, 60)
+            self.synth.all_sounds_off(chan)
+            self._samples(0.01)
             self.synth.noteon(chan, key, vel)
             on = self._samples(hold)
             self.synth.noteoff(chan, key)
