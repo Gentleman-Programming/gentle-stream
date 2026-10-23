@@ -21,11 +21,11 @@ Branch: `feat/realtime-music-tui` (local, no remote). Delivery: `exception-ok` (
 | ID | Specs | Route | Status | Evidence |
 |----|-------|-------|--------|----------|
 | G0 | S1, S3, S4, S5 | delegated (context backstop) | done | RED (8 failed + ImportError) → GREEN; 197 passed (parent re-ran); lo-fi hash identical both backends |
-| G1 ambient | S2, S4, S5 | delegated, parallel writer | pending (after G0) | — |
-| G2 chiptune | S2, S4, S5 | delegated, parallel writer | pending (after G0) | — |
-| G3 synthwave | S2, S4, S5 | delegated, parallel writer | pending (after G0) | — |
-| G4 jazz | S2, S4, S5 | delegated, parallel writer | pending (after G0) | — |
-| G5 rock/metal | S2, S4, S5 | delegated, parallel writer | pending (after G0) | — |
+| G1 ambient | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G2 chiptune | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G3 synthwave | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G4 jazz | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G5 rock/metal | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
 
 Route evidence: G1-G5 are independent units with disjoint edit surfaces (one module + one test file each), each clearly heavier than a subagent start → Writer trigger (a) parallelism; parent owns git and runs one seam check (full suite) at the end.
 
@@ -33,5 +33,6 @@ Route evidence: G1-G5 are independent units with disjoint edit surfaces (one mod
 
 - L1 (2026-10-23, user): "hagamos algo, que no sea solo lofi, que se pueda tambien generar diferentes estilos pero que por defecto sea lofi"
 - L2 (2026-10-23, user answer): selected "Ambient elegante, Chiptune / 8-bit, Synthwave, Jazz"; custom: "algo de metal o rock se podra?"
+- L5 (seam check): all five genres, U1 token display (3b4da86) and the FluidSynth voice-state root fix (1afccd4: every note primes a throw-away note) committed; full suite 278 passed; tree clean. Listening files: out/genre-<name>-{procedural,samples}.wav (seed 21, 120 s); nobody has listened yet (levels balanced by RMS). Measured real codex interpretation: ~2.2k tokens, ~US$0.00026.
 - L4 (G0): plugin interface genres/base.py (Genre: name, description, bpm, modes, voices; instruments, start, chord, schedule, master → Master), synth.py helpers (osc polyBLEP, adsr, distort), samples Program/Hit API, contract test over every genre × backend. Rock and metal share `rock` (metal = drums busy + energy ≥ 0.7). Advisory: Style.bpm still capped at 140. Also queued U1 (user: "si dale metemos"): show tokens/cost per interpretation; measured claude-bridge ~17.7k tokens/call, codex ~7.4k.
 - L3 (2026-10-23, user, earlier question): "por ejemplo si yo digo que quiero escuchar algo de mario bross lo hace?" — answered: the model only fills parameters; it never reproduces existing melodies (Nintendo copyright); chiptune gives an original retro-game feel.
