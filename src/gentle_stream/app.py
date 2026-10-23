@@ -5,11 +5,13 @@ the next bar. Everything shown comes from `player.now`, i.e. the bar that is aud
 """
 from __future__ import annotations
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
@@ -20,15 +22,52 @@ from .player import Player
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
 BLOCKS = " ▁▂▃▄▅▆▇█"
 
+# gentlemanprogramming.com palette
+GENTLEMAN_THEME = Theme(
+    name="gentleman",
+    primary="#ff76c3",        # rose
+    secondary="#f095c8",
+    accent="#ffb1dd",         # pink
+    foreground="#f6eff3",
+    background="#140a12",
+    surface="#241822",
+    panel="#342230",
+    success="#b4e7c7",
+    warning="#f2b86d",        # peach
+    error="#ff718f",
+    dark=True,
+    variables={
+        "text-muted": "#a78e9b",
+        "border": "#ff76c3",
+        "border-blurred": "#342230",
+        "block-cursor-foreground": "#140a12",
+        "block-cursor-background": "#ff76c3",
+        "block-cursor-blurred-background": "#342230",
+        "block-hover-background": "#342230",
+        "input-cursor-background": "#ff76c3",
+        "input-cursor-foreground": "#140a12",
+        "input-selection-background": "#ff76c3 30%",
+        "footer-background": "#1a1218",
+        "footer-key-foreground": "#ff76c3",
+        "footer-description-foreground": "#a78e9b",
+        "scrollbar": "#342230",
+        "scrollbar-hover": "#76616b",
+        "scrollbar-active": "#ff76c3",
+        "scrollbar-background": "#1a1218",
+    },
+)
+# spectrum rows, top to bottom: rose peaks over a muted base
+SPECTRUM_COLORS = ("#ff76c3", "#f095c8", "#ffb1dd", "#a78e9b", "#76616b")
+
 
 def model_label(model: str | None) -> str:
     return model or DEFAULT_MODEL_LABEL
 
 
 class Spectrum(Static):
-    """A few rows of block characters, one column per log-spaced band."""
+    """A few rows of block characters, one column per log-spaced band, shaded from rose (top) to muted."""
 
-    ROWS = 5
+    ROWS = len(SPECTRUM_COLORS)
 
     def __init__(self, player: Player, **kw):
         super().__init__(**kw)
@@ -38,10 +77,10 @@ class Spectrum(Static):
         width = max(8, self.size.width or 48)
         levels = self.player.spectrum(width) * self.ROWS * 8
         rows = []
-        for r in range(self.ROWS - 1, -1, -1):
+        for r, color in zip(range(self.ROWS - 1, -1, -1), SPECTRUM_COLORS):
             cell = (levels - r * 8).clip(0, 8).astype(int)
-            rows.append("".join(BLOCKS[c] for c in cell))
-        self.update("\n".join(rows))
+            rows.append(Text("".join(BLOCKS[c] for c in cell), style=color))
+        self.update(Text("\n").join(rows))
 
 
 class ModelPicker(ModalScreen[str | None]):
@@ -50,9 +89,12 @@ class ModelPicker(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "dismiss_picker", "Cancel")]
     DEFAULT_CSS = """
     ModelPicker { align: center middle; }
-    ModelPicker > Vertical { width: 60; height: auto; max-height: 80%; border: round $accent; padding: 0 1;
+    ModelPicker > Vertical { width: 60; height: auto; max-height: 80%; border: round $primary; padding: 0 1;
                              background: $surface; }
-    ModelPicker OptionList { height: auto; max-height: 20; }
+    ModelPicker .heading { color: $primary; text-style: bold; }
+    ModelPicker #picker-status { color: $text-muted; }
+    ModelPicker OptionList, ModelPicker OptionList:focus { height: auto; max-height: 20; border: none;
+                                                          background: $surface; }
     """
 
     def __init__(self, shell: GentleShell):
@@ -96,13 +138,17 @@ class StreamApp(App):
     SUB_TITLE = "real-time generative lo-fi"
     AUTO_FOCUS = None
     CSS = """
-    #panel { padding: 1 2; height: 1fr; }
-    #title { text-style: bold; color: $accent; }
-    #details, #mood-line, #model { color: $text-muted; }
-    #spectrum { height: 5; margin: 1 0; color: $accent; }
-    #state { text-style: bold; }
+    Screen { background: $background; }
+    Header { background: #1a1218; color: $primary; }
+    #panel { padding: 1 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; }
+    #title { text-style: bold; color: $primary; }
+    #details, #model { color: $text-muted; }
+    #mood-line { color: $accent; text-style: italic; }
+    #spectrum { height: 5; margin: 1 0; }
+    #state { color: $text-muted; }
     #status { margin-top: 1; }
-    #mood { dock: bottom; margin: 0 1 1 1; }
+    #mood { dock: bottom; margin: 0 1 1 1; border: round $panel; background: $surface; }
+    #mood:focus { border: round $primary; }
     """
     BINDINGS = [
         Binding("space", "toggle", "Play/Pause"),
@@ -118,6 +164,8 @@ class StreamApp(App):
     def __init__(self, player: Player, shell: GentleShell, initial_mood: str | None = None):
         super().__init__()
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
+        self.register_theme(GENTLEMAN_THEME)
+        self.theme = GENTLEMAN_THEME.name
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -154,7 +202,7 @@ class StreamApp(App):
         w["title"].update(f"♪ {now.style.name}")
         w["details"].update(now.style.summary())
         w["mood-line"].update(f"“{now.style.mood}”" if now.style.mood else "")
-        state = "▶ Playing" if p.playing else "⏸ Paused"
+        state = "[b $success]▶ Playing[/]" if p.playing else "[b $warning]⏸ Paused[/]"
         w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1} · vol {round(p.volume * 100)}%")
         w["spectrum"].tick()
 
@@ -209,7 +257,7 @@ class StreamApp(App):
             style = self.shell.interpret(mood, self.player.engine.style)
         except InterpretError as e:
             if not worker.is_cancelled:
-                self.call_from_thread(self._status, f"[red]Could not interpret the mood:[/] {e}")
+                self.call_from_thread(self._status, f"[$error]Could not interpret the mood:[/] {e}")
             return
         if worker.is_cancelled:
             return

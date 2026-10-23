@@ -157,3 +157,52 @@ def test_close_stops_the_stream_and_the_producer(player):
     p, stream = player
     p.close()
     assert not stream.active and not p._producer.is_alive()
+
+
+def noise_player(color, seed=7):
+    """A player whose engine renders broadband noise instead of music, pulled through the fake stream."""
+    rng = np.random.default_rng(seed)
+    engine = Engine(Style(name="Noise"), seed=1)
+
+    def bar():
+        n = SR // 2
+        x = rng.standard_normal(n)
+        if color == "pink":
+            spec = np.fft.rfft(x)
+            f = np.fft.rfftfreq(n)
+            spec[0] = 0
+            spec[1:] /= np.sqrt(f[1:])
+            x = np.fft.irfft(spec, n)
+        x = 0.1 * x / np.std(x)
+        return np.repeat(x[:, None], 2, axis=1).astype(np.float32)
+
+    engine.render_bar = bar
+    streams = []
+    p = Player(engine, stream_factory=lambda **kw: streams.append(FakeStream(**kw)) or streams[-1], prebuffer=0.5)
+    p.start()
+    wait_for(lambda: p.buffered_seconds >= 0.5)
+    return p, streams[0]
+
+
+@pytest.mark.parametrize("color", ["white", "pink"])
+def test_every_spectrum_band_carries_data_for_broadband_audio(color):
+    p, stream = noise_player(color)
+    try:
+        pull_seconds(stream, 0.5)
+        bands = p.spectrum(48)
+    finally:
+        p.close()
+    assert bands.shape == (48,) and np.all(bands <= 1)
+    assert np.all(bands > 0.05), f"empty bands: {np.flatnonzero(bands <= 0.05).tolist()}"
+
+
+def test_spectrum_bands_are_balanced_from_left_to_right():
+    p, stream = noise_player("pink")
+    try:
+        pull_seconds(stream, 0.5)
+        bands = p.spectrum(48)
+    finally:
+        p.close()
+    left, right = bands[:24].mean(), bands[24:].mean()
+    assert abs(left - right) < 0.08, (left, right)    # pink noise is the reference for music: an even bar
+    assert np.abs(np.diff(bands)).mean() < 0.05       # neighbouring columns are similar, no holes or spikes

@@ -158,3 +158,14 @@ async def test_an_initial_mood_is_interpreted_on_start():
         await app.workers.wait_for_complete()
         await pilot.pause(0.1)
         assert shell.calls[0][0] == "foggy harbour"
+
+
+@pytest.mark.asyncio
+async def test_the_app_uses_the_gentleman_programming_theme():
+    app, _ = make_app(FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        assert app.theme == "gentleman"
+        theme = app.current_theme
+        assert (theme.primary, theme.background, theme.error) == ("#ff76c3", "#140a12", "#ff718f")
+        assert app.query_one("#title").styles.color.hex.lower() == "#ff76c3"

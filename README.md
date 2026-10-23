@@ -8,6 +8,8 @@ The sound comes from the same procedural synthesis used for the Gentleman Progra
 drums, vinyl crackle, a small room and tape wow. Here it is rendered bar by bar while it plays, so it never ends
 and never repeats exactly.
 
+The TUI uses the gentlemanprogramming.com palette (a `gentleman` Textual theme): rose and pink on deep plum.
+
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/)

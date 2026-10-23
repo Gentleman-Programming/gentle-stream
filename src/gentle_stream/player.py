@@ -18,7 +18,12 @@ from .style import Style
 
 RAMP_SECONDS = 0.03
 CROSSFADE_SECONDS = 0.08
-SPECTRUM_SIZE = 2048
+SPECTRUM_SIZE = 8192                   # ~0.19 s of output: fine enough for narrow low bands
+SPECTRUM_RANGE = (50.0, 10000.0)       # Hz covered by the bar; the master low-pass leaves little above
+SPECTRUM_MIN_BINS = 3.0                # narrow low bands average at least this many FFT bins
+SPECTRUM_TILT = 3.0                    # dB per octave around 1 kHz: pink noise (and most music) reads flat
+SPECTRUM_FLOOR, SPECTRUM_DB = -96.0, 60.0   # dB shown as empty, and the dB span up to a full column
+SPECTRUM_FALL = 0.12                   # how much a column may drop per call; rises are immediate
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,8 @@ class Player:
         self.underruns = 0
         self.level = 0.0
         self._tail = np.zeros(SPECTRUM_SIZE, dtype=np.float32)
+        self._window = np.hanning(SPECTRUM_SIZE).astype(np.float32)
+        self._shown = np.zeros(0)        # last spectrum() result, for the gentle fall
         self.now = NowPlaying(engine.style, engine.piece, 0)
 
     # ------------------------------------------------------------ lifecycle
@@ -140,18 +147,30 @@ class Player:
         return self._buffered / self.engine.sr
 
     def spectrum(self, bands: int = 32) -> np.ndarray:
-        """Log-spaced band magnitudes of the latest output, scaled to 0..1 for display."""
-        x = self._tail.copy() * np.hanning(SPECTRUM_SIZE)
-        mag = np.abs(np.fft.rfft(x))
-        freqs = np.fft.rfftfreq(SPECTRUM_SIZE, 1 / self.engine.sr)
-        edges = np.geomspace(40, 12000, bands + 1)
-        out = np.zeros(bands)
-        for i in range(bands):
-            sel = mag[(freqs >= edges[i]) & (freqs < edges[i + 1])]
-            if sel.size:
-                out[i] = sel.max()
-        db = 20 * np.log10(out + 1e-9)
-        return np.clip((db + 20) / 60, 0, 1)
+        """Log-spaced band levels of the latest output, scaled to 0..1 for display. Runs on the UI thread.
+
+        Each band is the mean power over its frequency range, integrated from the FFT with fractional bins, so a
+        band narrower than one bin still gets a value and wide high bands are averaged instead of merged. A tilt
+        of SPECTRUM_TILT dB/octave makes pink noise flat. Columns rise at once and fall gently between calls.
+        """
+        df = self.engine.sr / SPECTRUM_SIZE
+        x = self._tail * self._window
+        power = np.abs(np.fft.rfft(x)) ** 2 * (2 / self._window.sum()) ** 2
+        # bin k covers [(k - 0.5) df, (k + 0.5) df]; interpolating the running sum integrates fractional bins
+        cum = np.concatenate([[0.0], np.cumsum(power)])
+        cum_freqs = (np.arange(len(cum)) - 0.5) * df
+        edges = np.geomspace(*SPECTRUM_RANGE, bands + 1)
+        centers = np.sqrt(edges[:-1] * edges[1:])
+        width = np.maximum(np.diff(edges), SPECTRUM_MIN_BINS * df)
+        lo = (edges[:-1] + edges[1:] - width) / 2
+        hi = lo + width
+        mean = (np.interp(hi, cum_freqs, cum) - np.interp(lo, cum_freqs, cum)) / ((hi - lo) / df)
+        db = 10 * np.log10(mean + 1e-12) + SPECTRUM_TILT * np.log2(centers / 1000)
+        level = np.clip((db - SPECTRUM_FLOOR) / SPECTRUM_DB, 0, 1)
+        if self._shown.shape == level.shape:
+            level = np.maximum(level, self._shown - SPECTRUM_FALL)
+        self._shown = level
+        return level
 
     # ------------------------------------------------------------ threads
     def _produce(self) -> None:
