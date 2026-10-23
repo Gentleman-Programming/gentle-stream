@@ -18,13 +18,14 @@ Branch: `feat/realtime-music-tui`. Delivery: `exception-ok` (local work-unit com
 
 | ID | Specs | Route | Status | Evidence |
 |----|-------|-------|--------|----------|
-| C2 | S1, S7 | delegated (context backstop) + independent verifier (Risk item 5) | implemented; verifier pending | RED (ImportError samples/mastering; engine 2 failed; main 3 failed) → GREEN; 117 tests green (parent re-ran); samples 116x, procedural 40x real time |
+| C2 | S1, S7 | delegated (context backstop) + independent verifier (Risk item 5) | done | RED (ImportError samples/mastering; engine 2 failed; main 3 failed) → GREEN; 117 tests green (parent re-ran); samples 116x, procedural 40x real time |
 | C1 | S1-S6 | delegated (context backstop; disjoint from T5 writer) | done | RED (no composer module, no engine.section) → GREEN; 89 tests green (parent re-ran); 28.6x real time; peak 0.80 |
 
 ## Log
 
 - L1 (2026-10-23, user): "bien y una cosa, para los videos cuando te pido musica o para los shorts, como e lque te pedi para el reloj el lunar pilot, fue hecho de este estilo? hay forma de que sea algo mas complejo?"
 - L2 (2026-10-23, user): "solo A"
+- L8 (C2 independent verifier): S1, S6, S7 PASS, no blockers; 117 passed x2, 0 skips; path traversal/symlink tar probes rejected; fallback to procedural in 5 scenarios; uv tool install without extra runs. Advisories: same-process sample renders not bit-identical for pad/brush hat (~-87 dBFS); urlopen without timeout can hang setup-samples and HTTPException shows a traceback; SIGKILL leaves .partial-* files; existing cache files are 0600 from an earlier code version; no warning when sf2 installed but pyfluidsynth missing; Debian sid/forky moved to 3.1-6.
 - L7 (C2): brew fluid-synth 2.6.1; optional extra `samples = [pyfluidsynth>=1.4.0]`; `gentle-stream setup-samples` downloads https://deb.debian.org/debian/pool/main/f/fluid-soundfont/fluid-soundfont-gm_3.1-5.3_all.deb (SHA-256 pinned, matches packages.debian.org) to ~/.cache/gentle-stream with LICENSES.txt; never at startup. Master: procedural-IR convolution reverb + RMS bus compressor (stateful) + existing tanh soft clip. Advisories: balance calibrated by RMS, not by ear; Debian may drop 3.1-5.3 from the pool; with the sf2 installed, player/app tests run on the sample backend. Listening: out/*-samples.wav.
 - L6 (C1): new pure planner `composer.py`; form intro 4 → A 8 → B 8 → A' 8 (+2 key lift with pivot) → breakdown 4 → B' 8 → release 4, then loops without intro with a developed motif and a new B progression. Instruments and master chain unchanged (diff checked). Advisories: contrary motion 99% may sound rigid; key returns from +2 to home at the breakdown without pivot; one form cycle is ~147 s at 72 bpm. Listening files (git-ignored): out/{midnight-rain,sunny-rhodes}-{antes,despues}.wav, seed 21, 150 s.
 - L4 (2026-10-23, user): "agrega b si sabemos que son de licencia libre"
