@@ -1,6 +1,8 @@
 """Musical style: the parameters a mood prompt is translated into.
 
-Every field is bounded so that any input (an LLM answer included) yields a playable style.
+Every field is bounded so that any input (an LLM answer included) yields a playable style. `genre` names one of
+the registered genres (`genres.NAMES`, lo-fi by default); `chords` and `lead` are four shared tone colours that each
+genre voices its own way, so presets and the model's answer schema stay the same across genres.
 """
 from __future__ import annotations
 
@@ -42,6 +44,11 @@ def _clamp(value, lo, hi, default):
     return min(hi, max(lo, v))
 
 
+def genre_names() -> tuple[str, ...]:
+    from .genres import NAMES   # imported late: the genre modules may import this module
+    return NAMES
+
+
 def _choice(value, allowed, default):
     if isinstance(value, str):
         v = value.strip().lower()
@@ -55,6 +62,7 @@ def _choice(value, allowed, default):
 class Style:
     name: str = "Midnight Rain"
     mood: str = ""
+    genre: str = "lofi"
     key: str = "D"
     mode: str = "minor"
     bpm: float = 72.0
@@ -88,6 +96,7 @@ class Style:
         return cls(
             name=name,
             mood=" ".join(str(mood).split())[:200],
+            genre=_choice(data.get("genre"), genre_names(), b.genre),
             key=_choice(data.get("key"), KEYS, b.key),
             mode=_choice(data.get("mode"), tuple(MODES), b.mode),
             bpm=round(_clamp(data.get("bpm"), 50, 140, b.bpm), 1),
@@ -110,7 +119,7 @@ class Style:
 
     def variation(self, rng: np.random.Generator) -> Style:
         """A new piece with the same mood: nearby key, another idiomatic progression, a small tempo drift,
-        and sometimes swapped instruments. Mode, energy and colour stay, so the feeling is kept."""
+        and sometimes swapped instruments. Genre, mode, energy and colour stay, so the feeling is kept."""
         key = KEYS[(KEYS.index(self.key) + int(rng.choice([0, 2, -2, 5, -5, 3, -3]))) % 12]
         options = [p for p in PROGRESSIONS[self.mode] if p != self.progression] or [self.progression]
         prog = tuple(options[int(rng.integers(len(options)))])
@@ -124,7 +133,7 @@ class Style:
                        swing=float(np.clip(self.swing + rng.uniform(-0.03, 0.03), 0, 0.3)))
 
     def summary(self) -> str:
-        return (f"{self.key} {self.mode} · {self.bpm:g} bpm · "
+        return (f"{self.genre} · {self.key} {self.mode} · {self.bpm:g} bpm · "
                 f"{'-'.join(str(d) for d in self.progression)} · {self.chords}/{self.lead} · drums {self.drums}")
 
 

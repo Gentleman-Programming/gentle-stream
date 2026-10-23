@@ -16,6 +16,7 @@ import tempfile
 import threading
 import urllib.request
 from collections import OrderedDict
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable
@@ -257,11 +258,37 @@ def _finish(x: np.ndarray, sr: int, floor: float = 1e-4) -> np.ndarray:
     return x
 
 
+@dataclass(frozen=True)
+class Program:
+    """A melodic General MIDI program for `SampleInstruments.play`. `rms` is the level a reference note (middle C,
+    1 s, velocity 0.8) is scaled to; the lo-fi piano/rhodes are about 0.48, the pad 0.1 (`reference_rms`)."""
+
+    program: int
+    bank: int = 0
+    velocity: tuple[int, int] = (40, 110)   # MIDI velocity for vel 0 .. 1
+    tail: float = 1.0                       # release seconds rendered after the note off
+    rms: float = 0.4
+
+
+@dataclass(frozen=True)
+class Hit:
+    """A drum sound for `SampleInstruments.hit`: GM drum kit (0 Standard, 8 Room, 16 Power, 24 Electronic,
+    25 TR-808, 32 Jazz, 40 Brush) and key (36 kick, 38 snare, 42 closed hat...). `rms` as in `Program`, measured
+    on the first 0.5 s of the hit (lo-fi kick 0.27, brush 0.18, hat 0.12)."""
+
+    kit: int
+    key: int
+    velocity: int = 100
+    seconds: float = 0.5
+    rms: float = 0.2
+
+
 class SampleInstruments:
     """Same interface as `engine.Instruments`, voiced by FluidR3_GM (the sub bass stays a procedural sine).
 
     Rendered notes are cached by (instrument, key, duration bucket, velocity bucket); each instrument is scaled
-    once so its level matches the procedural voice the engine's mix was balanced for.
+    once so its level matches the procedural voice the engine's mix was balanced for. Genres play any other GM
+    program or drum through `play(Program(...), ...)` and `hit(Hit(...))`, cached the same way.
     """
 
     # name: (bank, program, MIDI velocity range, release tail seconds)
@@ -298,6 +325,23 @@ class SampleInstruments:
         return self._cached((name, key, d, vb), lambda: _finish(
             self.r.note(0, bank, prog, key, int(v0 + (v1 - v0) * vb / self.VEL_STEPS), d, tail), self.sr)
             * self._scale[name])
+
+    def play(self, p: Program, m, dur: float, vel: float = 1.0) -> np.ndarray:
+        """MIDI note `m` on program `p`, held `dur` seconds (bucketed) at velocity `vel` (0-1, bucketed)."""
+        v0, v1 = p.velocity
+        d = max(1, round(dur / self.DUR_STEP)) * self.DUR_STEP
+        vb = int(np.clip(round(vel * self.VEL_STEPS), 1, self.VEL_STEPS))
+        key = int(np.clip(round(m), 0, 127))
+        return self._cached((p, key, d, vb), lambda: _finish(
+            self.r.note(0, p.bank, p.program, key, int(v0 + (v1 - v0) * vb / self.VEL_STEPS), d, p.tail), self.sr)
+            * _program_level(self.r, self.sr, p))
+
+    def hit(self, h: Hit, g: float = 1.0) -> np.ndarray:
+        """Drum `h` at `g` times its velocity (rounded to 0.05)."""
+        g = round(g * 20) / 20
+        return self._cached((h, g), lambda: _finish(
+            self.r.note(Renderer.DRUMS, 128, h.kit, h.key, int(np.clip(h.velocity * g, 1, 127)), 0.05, h.seconds),
+            self.sr) * _hit_level(self.r, self.sr, h))
 
     def piano(self, m, dur, vel=1.0):
         return self._tonal("piano", m, dur, vel)
@@ -346,3 +390,29 @@ def _levels(renderer: Renderer, sr: int) -> dict[str, float]:
         s = _finish(renderer.note(Renderer.DRUMS, 128, kit, key, vel, 0.05, secs), sr)
         out[name] = rms(getattr(proc, name)()) / rms(s)
     return out
+
+
+def _rms(x: np.ndarray, sr: int) -> float:
+    return float(np.sqrt(np.mean(np.square(x[:int(0.5 * sr)])))) + 1e-12
+
+
+def reference_rms(sr: int = 44100) -> dict[str, float]:
+    """RMS of the procedural lo-fi voices' reference notes, the scale `Program.rms` and `Hit.rms` are set on."""
+    from .engine import Instruments
+    proc = Instruments(np.random.default_rng(0), sr)
+    out = {name: _rms(getattr(proc, name)(60, 1.0, 0.8), sr) for name in SampleInstruments.TONAL}
+    out.update({name: _rms(getattr(proc, name)(), sr) for name in SampleInstruments.DRUM})
+    return out
+
+
+@lru_cache(maxsize=256)
+def _program_level(renderer: Renderer, sr: int, p: Program) -> float:
+    v0, v1 = p.velocity
+    ref = renderer.note(0, p.bank, p.program, 60, int(v0 + (v1 - v0) * 0.8), 1.0, p.tail)
+    return p.rms / _rms(_finish(ref, sr), sr)
+
+
+@lru_cache(maxsize=256)
+def _hit_level(renderer: Renderer, sr: int, h: Hit) -> float:
+    ref = renderer.note(Renderer.DRUMS, 128, h.kit, h.key, h.velocity, 0.05, h.seconds)
+    return h.rms / _rms(_finish(ref, sr), sr)

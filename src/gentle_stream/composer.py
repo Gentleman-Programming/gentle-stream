@@ -4,11 +4,13 @@ The composer decides WHAT plays in every bar; the engine decides how it sounds. 
 it plans the piece one form cycle at a time (the stream is endless, so the form loops with fresh variation) and
 answers `plan(bar)` with a `BarPlan`: section, energy, chord (and an optional passing chord on beats 3-4), key
 lift, active layers and the notes of the lead, the counter-melody and the bass. It is pure and deterministic per
-seed: it owns its random generator and never touches the audio one.
+seed: it owns its random generator and never touches the audio one. A genre may reshape the diatonic chords
+through `chord_hook` (see `genres.base.Genre.chord`); everything else is shared by every genre.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -102,8 +104,10 @@ class _Bar:
 
 
 class Composer:
-    def __init__(self, style: Style, seed: int, ton: int):
+    def __init__(self, style: Style, seed: int, ton: int,
+                 chord_hook: Callable[[Chord, tuple[int, ...]], Chord] | None = None):
         self.style, self.ton = style, ton
+        self.chord_hook = chord_hook
         self.rng = np.random.default_rng([seed, 0xC0])
         self.scale_iv = MODES[style.mode]
         self.ninth = {d: bool(self.rng.random() < 0.55) for d in range(1, 8)}
@@ -140,7 +144,8 @@ class Composer:
             tones[1] += 1
         elif self.ninth[degree] and deg(4) - deg(0) != 6:  # no ninth on diminished chords
             tones.append(deg(8))
-        return Chord(degree, tuple(tones))
+        chord = Chord(degree, tuple(tones))
+        return self.chord_hook(chord, sc) if self.chord_hook else chord
 
     @staticmethod
     def _dominant7(root: int) -> Chord:

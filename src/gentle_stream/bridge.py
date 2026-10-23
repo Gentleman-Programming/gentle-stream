@@ -13,12 +13,15 @@ import subprocess
 import threading
 from dataclasses import dataclass, field
 
+from .genres import NAMES as GENRE_NAMES, REGISTRY
 from .style import CHORD_INSTRUMENTS, DRUMS, KEYS, LEAD_INSTRUMENTS, MODES, Style
 
 QUIET_FLAGS = ("--no-session", "-nt", "-ns", "-np", "-nc", "--no-mcp", "--no-themes", "--no-skill-registry")
 
-PROMPT = """You are the composer of an endless, real-time generative lo-fi music stream.
+PROMPT = """You are the composer of an endless, real-time generative music stream (lo-fi by default).
 Translate the listener's request (a feeling, a concept, a place, a scene; any language) into musical parameters.
+The music is always newly and originally composed: never reproduce existing melodies, songs, riffs or soundtracks,
+even when the request names one; capture only its general feel (genre, tempo, colour, energy).
 
 Listener request: {mood}
 
@@ -27,6 +30,7 @@ Current parameters (keep what the request does not ask to change):
 
 Reply with ONLY one JSON object, no prose, with exactly these fields:
 - "name": short evocative track title (max 4 words)
+- "genre": one of {genre_names} (see Genres below)
 - "key": one of {keys}
 - "mode": one of {modes}
 - "bpm": number 50-140
@@ -40,7 +44,23 @@ Reply with ONLY one JSON object, no prose, with exactly these fields:
 - "vinyl": 0-1 (crackle)
 - "space": 0-1 (room size)
 - "lead_density": 0-1 (how often the melody plays)
+
+Genres (lofi is the default: change the genre only when the request suggests another one, by naming it or by a
+style, era, instrument or scene that clearly belongs to it; a request that only adjusts the music keeps the
+current genre). "chords" and "lead" are tone colours each genre plays its own way:
+{genres}
 """
+
+
+def genre_lines() -> str:
+    """One line per registered genre: description, tempo and mode hints, and what the tone colours mean."""
+    lines = []
+    for name, g in REGISTRY.items():
+        colours = ", ".join(f"{k} = {v}" for k, v in g.voices.items())
+        lines.append(f"- {name}: {g.description} (typical bpm {g.bpm[0]}-{g.bpm[1]}; modes {', '.join(g.modes)}; "
+                     f"{colours})")
+    return "\n".join(lines)
+
 
 
 class InterpretError(RuntimeError):
@@ -123,7 +143,7 @@ class GentleShell:
         cur.pop("mood", None)
         prompt = PROMPT.format(mood=mood, current=json.dumps(cur), keys=", ".join(KEYS), modes=", ".join(MODES),
                                chords=", ".join(CHORD_INSTRUMENTS), leads=", ".join(LEAD_INSTRUMENTS),
-                               drums=", ".join(DRUMS))
+                               drums=", ".join(DRUMS), genre_names=", ".join(GENRE_NAMES), genres=genre_lines())
         data = extract_json(self._run(self.command(prompt)))
         data["mood"] = mood
         return Style.from_dict(data, current)

@@ -125,3 +125,23 @@ def test_cancel_kills_a_running_gentle_shell(fake):
     t.join(5)
     assert not t.is_alive() and time.monotonic() - t0 < 2
     assert errors == ["cancelled"]
+
+
+def test_prompt_lists_every_genre_with_its_description(fake):
+    from gentle_stream.genres import REGISTRY
+    run, argv = fake
+    GentleShell(binary=str(run('{"name": "x"}'))).interpret("calm", Style(genre="jazz"))
+    prompt = argv()[-1]
+    assert '"genre"' in prompt and '"genre": "jazz"' in prompt   # the current genre is part of the context
+    for name, genre in REGISTRY.items():
+        assert f"{name}: {genre.description}" in prompt
+    assert "lofi is the default" in prompt
+    assert "never reproduce" in prompt.lower()
+
+
+def test_the_model_picks_the_genre_and_invalid_ones_keep_the_current(fake):
+    run, _ = fake
+    s = GentleShell(binary=str(run('{"name": "Blue", "genre": "Jazz"}'))).interpret("smoky club", Style())
+    assert s.genre == "jazz"
+    s = GentleShell(binary=str(run('{"name": "x", "genre": "polka"}'))).interpret("x", Style(genre="rock"))
+    assert s.genre == "rock"

@@ -40,3 +40,35 @@ def test_variation_with_no_lead_stays_without_lead():
 def test_to_dict_round_trips():
     s = Style(name="X", progression=(2, 5, 1))
     assert Style.from_dict(s.to_dict()) == s
+
+
+# ---------------------------------------------------------------- genre
+def test_genre_defaults_to_lofi():
+    assert Style().genre == "lofi" and DEFAULT.genre == "lofi"
+
+
+def test_from_dict_accepts_every_registered_genre():
+    from gentle_stream.genres import NAMES
+    assert NAMES[0] == "lofi" and set(NAMES) == {"lofi", "ambient", "chiptune", "synthwave", "jazz", "rock"}
+    for name in NAMES:
+        assert Style.from_dict({"genre": f" {name.upper()} "}).genre == name
+
+
+def test_an_unknown_genre_falls_back_to_the_current_one():
+    assert Style.from_dict({"genre": "polka"}, Style(genre="jazz")).genre == "jazz"
+    assert Style.from_dict({"genre": 3}).genre == "lofi"
+
+
+def test_styles_saved_without_a_genre_load_as_lofi():
+    old = Style().to_dict()
+    old.pop("genre")
+    assert Style.from_dict(old).genre == "lofi"
+
+
+def test_variation_keeps_the_genre():
+    assert Style(genre="synthwave").variation(np.random.default_rng(2)).genre == "synthwave"
+
+
+def test_summary_shows_the_genre():
+    assert Style(genre="chiptune").summary().startswith("chiptune · ")
+    assert "lofi" in Style().summary()
