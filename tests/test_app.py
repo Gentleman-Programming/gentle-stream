@@ -8,6 +8,7 @@ from gentle_stream.engine import Engine
 from gentle_stream.player import Player
 from gentle_stream.presets import PresetStore
 from gentle_stream.style import Style
+from tests.test_daemon import runtime, wait_for  # noqa: F401  (fixture: private runtime dir, fake audio, cleanup)
 from tests.test_player import FakeStream
 
 
@@ -432,3 +433,105 @@ async def test_a_corrupt_presets_file_is_reported_in_the_picker(tmp_path):
         await pilot.pause(0.1)
         assert "presets.json" in text(app.screen, "#presets-status")
     assert path.read_text(encoding="utf-8") == "{oops"
+
+
+# ------------------------------------------------------------ background player
+@pytest.mark.asyncio
+async def test_b_leaves_the_music_playing_in_the_background(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    app = StreamApp(player, FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert "Playing" in text(app, "#state")
+        await pilot.press("b")
+    still = client.connect()
+    assert still.pid == player.pid and still.playing
+
+
+@pytest.mark.asyncio
+async def test_q_quits_and_stops_the_background_music(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    app = StreamApp(player, FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("q")
+    with pytest.raises(client.NoPlayer):
+        client.connect()
+
+
+@pytest.mark.asyncio
+async def test_an_attached_tui_shows_and_controls_the_running_music(runtime):
+    from gentle_stream import client
+
+    other = client.ensure()
+    other.set_style(RAIN)
+    wait_for(lambda: other.spectrum(8) is not None and other.now.style == RAIN, timeout=20)
+    shell = FakeShell(answer={"name": "Summer Storm", "mode": "mixolydian"})
+    app = StreamApp(client.ensure(), shell)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert "Rainy Café" in text(app, "#title")
+        assert "rainy night in a small café" in text(app, "#mood-line")
+        await pilot.press("space")
+        await pilot.pause(0.2)
+        assert "Paused" in text(app, "#state")
+        other.spectrum(8)
+        assert not other.playing
+        await pilot.press("minus")
+        assert other.spectrum(8) is not None and other.volume == pytest.approx(0.75)
+        await pilot.press("space")                     # playing again, so the next bars get rendered
+        await pilot.press("slash", *"storm", "enter")
+        await app.workers.wait_for_complete()
+        assert shell.calls[0][1] == RAIN               # interpreted from what the player renders
+        wait_for(lambda: other.spectrum(8) is not None and other.style.name == "Summer Storm")
+        assert other.style.mode == "mixolydian"
+        await pilot.press("b")
+
+
+@pytest.mark.asyncio
+async def test_the_tui_leaves_when_the_music_is_stopped_elsewhere(runtime):
+    from gentle_stream import client
+
+    app = StreamApp(client.ensure(), FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        client.connect().close()                       # e.g. `gentle-stream ctl stop` from another terminal
+        await pilot.pause(0.3)
+        assert not app.is_running
+
+
+@pytest.mark.asyncio
+async def test_b_with_an_in_process_player_closes_it():
+    app, player = make_app(FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.press("b")
+    assert not player._producer.is_alive()            # nothing can outlive the app in-process
+
+
+@pytest.mark.asyncio
+async def test_the_footer_shows_back_and_quit():
+    app, _ = make_app(FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        keys = {b.key: b.description for b in app.BINDINGS if b.show}
+        assert "b" in keys and "q" in keys
+        assert "keep" in keys["b"].lower() and "stop" in keys["q"].lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size, min_rows", [((160, 45), 20), ((80, 24), 5)])
+async def test_the_spectrum_fills_the_free_height_and_the_info_sits_by_the_input(size, min_rows):
+    app, _ = make_app(FakeShell())
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.3)
+        spectrum = app.query_one("#spectrum")
+        assert spectrum.region.height >= min_rows
+        assert len(str(spectrum.render()).split("\n")) == spectrum.region.height
+        status, mood = app.query_one("#status"), app.query_one("#mood")
+        gap = mood.region.y - (status.region.y + status.region.height)
+        assert 0 <= gap <= 3                      # no empty band between the info and the input

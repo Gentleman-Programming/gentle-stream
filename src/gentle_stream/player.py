@@ -39,6 +39,11 @@ class _Chunk:
     meta: NowPlaying
 
 
+def settle(level: np.ndarray, shown: np.ndarray) -> np.ndarray:
+    """Spectrum columns rise at once and fall by at most SPECTRUM_FALL from what was `shown` last time."""
+    return np.maximum(level, shown - SPECTRUM_FALL) if shown.shape == level.shape else level
+
+
 def _default_stream(**kw):
     import sounddevice as sd
 
@@ -146,12 +151,26 @@ class Player:
     def buffered_seconds(self) -> float:
         return self._buffered / self.engine.sr
 
+    @property
+    def style(self) -> Style:
+        """The style being rendered, which may not be audible yet: the base for the next mood."""
+        return self.engine.style
+
+    def detach(self) -> None:
+        """Leave the music playing without this app; an in-process player cannot outlive it, so it closes."""
+        self.close()
+
     def spectrum(self, bands: int = 32) -> np.ndarray:
-        """Log-spaced band levels of the latest output, scaled to 0..1 for display. Runs on the UI thread.
+        """`spectrum_levels`, with columns that rise at once and fall gently between calls. Runs on the UI thread."""
+        self._shown = settle(self.spectrum_levels(bands), self._shown)
+        return self._shown
+
+    def spectrum_levels(self, bands: int = 32) -> np.ndarray:
+        """Log-spaced band levels of the latest output, scaled to 0..1 for display.
 
         Each band is the mean power over its frequency range, integrated from the FFT with fractional bins, so a
         band narrower than one bin still gets a value and wide high bands are averaged instead of merged. A tilt
-        of SPECTRUM_TILT dB/octave makes pink noise flat. Columns rise at once and fall gently between calls.
+        of SPECTRUM_TILT dB/octave makes pink noise flat. Stateless, so any thread may call it.
         """
         df = self.engine.sr / SPECTRUM_SIZE
         x = self._tail * self._window
@@ -166,11 +185,7 @@ class Player:
         hi = lo + width
         mean = (np.interp(hi, cum_freqs, cum) - np.interp(lo, cum_freqs, cum)) / ((hi - lo) / df)
         db = 10 * np.log10(mean + 1e-12) + SPECTRUM_TILT * np.log2(centers / 1000)
-        level = np.clip((db - SPECTRUM_FLOOR) / SPECTRUM_DB, 0, 1)
-        if self._shown.shape == level.shape:
-            level = np.maximum(level, self._shown - SPECTRUM_FALL)
-        self._shown = level
-        return level
+        return np.clip((db - SPECTRUM_FLOOR) / SPECTRUM_DB, 0, 1)
 
     # ------------------------------------------------------------ threads
     def _produce(self) -> None:

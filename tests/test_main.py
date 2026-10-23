@@ -1,7 +1,7 @@
 import pytest
-import sounddevice as sd
 
 from gentle_stream import main
+from tests.test_daemon import runtime  # noqa: F401  (fixture: private runtime dir, fake audio, cleanup)
 
 
 def test_help_lists_flags_and_controls(capsys):
@@ -10,18 +10,34 @@ def test_help_lists_flags_and_controls(capsys):
     out = capsys.readouterr().out
     assert exit_info.value.code == 0
     for text in ("--model", "--mood", "--gentle-shell", "play / pause", "next piece", "describe a mood",
-                 "save what is playing", "saved prompts", "presets.json"):
+                 "save what is playing", "saved prompts", "presets.json", "the music keeps playing",
+                 "quit and stop the music", "ctl", "play|pause|toggle|next|stop|status"):
         assert text in out
+    assert "daemon" not in out                     # started automatically, never by hand
 
 
-def test_an_unavailable_audio_output_is_a_clean_error(monkeypatch, capsys):
-    def no_device(**kw):
-        raise sd.PortAudioError("Error querying device -1")
-
-    monkeypatch.setattr(sd, "OutputStream", no_device)
+def test_an_unavailable_audio_output_is_a_clean_error(runtime, monkeypatch, capsys):
+    monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:no_device")
     assert main([]) == 1
     err = capsys.readouterr().err
     assert err == "gentle-stream: cannot open the audio output: Error querying device -1\n"
+
+
+def test_the_tui_attaches_to_the_music_already_playing(runtime, monkeypatch):
+    from gentle_stream import client
+    from gentle_stream.app import StreamApp
+
+    running = client.ensure()
+    seen = []
+    monkeypatch.setattr(StreamApp, "run", lambda self: seen.append((self.player.pid, self.initial_mood)))
+    assert main(["--mood", "foggy harbour"]) == 0
+    assert seen == [(running.pid, "foggy harbour")]   # no second player, the mood goes to the running one
+
+
+def test_ctl_rejects_an_unknown_action(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["ctl", "louder"])
+    assert exit_info.value.code == 2
 
 
 def test_help_lists_the_setup_samples_command(capsys):

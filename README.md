@@ -164,7 +164,8 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `p` | Saved prompts: `Enter` applies one instantly, `d` or `Delete` removes it, `Esc` closes |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
-| `q` | Quit (a running `gentle-shell` call is cancelled) |
+| `b` | Back: leave the app and keep the music playing in the background |
+| `q` | Quit and stop the music (a running `gentle-shell` call is cancelled) |
 
 ### Flags
 
@@ -174,6 +175,28 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `--mood TEXT` | Mood to interpret as soon as the app starts |
 | `--gentle-shell PATH` | `gentle-shell` executable to run (default: `gentle-shell`) |
 | `setup-samples` | Subcommand: download the FluidR3_GM soundfont once (see below) |
+| `ctl ACTION` | Subcommand: control the music playing in the background (see below) |
+
+<div align="right"><a href="#top">Back to top</a></div>
+
+<div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
+## Background playback
+
+The music plays in a background player, one per user, that `gentle-stream` starts on its own. Press `b` to leave the app with the music still playing; run `gentle-stream` again and it attaches to the same music (with `--mood`, the new mood is sent to it). `q` stops the music and the player.
+
+```bash
+gentle-stream ctl status   # {"running": true, "playing": true, "name": "Midnight Rain", "genre": "lofi", "mood": ""}
+gentle-stream ctl pause    # also: play, toggle, next
+gentle-stream ctl stop     # ends the background player
+```
+
+| Command | Output | Exit code |
+| :--- | :--- | :--- |
+| `ctl status` | One JSON line; just `{"running": false}` when nothing plays | `0` |
+| `ctl play`, `pause`, `toggle`, `next`, `stop` | Nothing, or `gentle-stream: nothing is playing` on stderr | `0`, or `1` when nothing plays |
+
+The player listens on a Unix socket in a private directory (`$XDG_RUNTIME_DIR/gentle-stream`, default `~/.cache/gentle-stream/run`, mode `0700`), authenticated with a random key in a `0600` file. A player that crashed is detected and replaced on the next start. If the audio output cannot be opened, `gentle-stream` prints the error and exits with `1`.
 
 <div align="right"><a href="#top">Back to top</a></div>
 
@@ -280,7 +303,9 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 
 | Path | What it holds |
 | :--- | :--- |
-| [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, opening the audio output |
+| [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, `ctl`, attaching to or starting the background player |
+| [`src/gentle_stream/daemon.py`](src/gentle_stream/daemon.py) | The background player process: audio output, private socket, single instance |
+| [`src/gentle_stream/client.py`](src/gentle_stream/client.py) | Attach to, start and control the background player (same interface as the in-process player) |
 | [`src/gentle_stream/app.py`](src/gentle_stream/app.py) | Textual TUI, theme, spectrum, model picker, save and saved-prompt dialogs |
 | [`src/gentle_stream/bridge.py`](src/gentle_stream/bridge.py) | Gentle Shell call, prompt, JSON and token-usage parsing, cancellation |
 | [`src/gentle_stream/style.py`](src/gentle_stream/style.py) | The musical parameters and their validation; `n` variations |

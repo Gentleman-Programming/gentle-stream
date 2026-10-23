@@ -1,5 +1,8 @@
 """Interactive TUI: what is playing, a live spectrum, play/pause/next, and a mood prompt.
 
+The player is usually the background player (`client.PlayerClient`), so `b` leaves with the music still playing and
+`q` stops it; an in-process `Player` works the same way, except that it always stops with the app.
+
 The mood is interpreted by Gentle Shell in a thread worker while the music keeps playing; the new style starts at
 the next bar. Everything shown comes from `player.now`, i.e. the bar that is audible right now. What is audible can
 be saved under a name and applied later, instantly, without asking Gentle Shell again.
@@ -69,9 +72,9 @@ def model_label(model: str | None) -> str:
 
 
 class Spectrum(Static):
-    """A few rows of block characters, one column per log-spaced band, shaded from rose (top) to muted."""
+    """Block-character bars filling the widget, one column per log-spaced band, shaded from rose (top) to muted."""
 
-    ROWS = len(SPECTRUM_COLORS)
+    MIN_ROWS = 5
 
     def __init__(self, player: Player, **kw):
         super().__init__(**kw)
@@ -79,9 +82,11 @@ class Spectrum(Static):
 
     def tick(self) -> None:
         width = max(8, self.size.width or 48)
-        levels = self.player.spectrum(width) * self.ROWS * 8
+        rows_n = max(self.MIN_ROWS, self.size.height or self.MIN_ROWS)
+        levels = self.player.spectrum(width) * rows_n * 8
         rows = []
-        for r, color in zip(range(self.ROWS - 1, -1, -1), SPECTRUM_COLORS):
+        for i, r in enumerate(range(rows_n - 1, -1, -1)):    # i = 0 is the top row
+            color = SPECTRUM_COLORS[min(len(SPECTRUM_COLORS) - 1, i * len(SPECTRUM_COLORS) // rows_n)]
             cell = (levels - r * 8).clip(0, 8).astype(int)
             rows.append(Text("".join(BLOCKS[c] for c in cell), style=color))
         self.update(Text("\n").join(rows))
@@ -256,7 +261,7 @@ class StreamApp(App):
     #title { text-style: bold; color: $primary; }
     #details, #model { color: $text-muted; }
     #mood-line { color: $accent; text-style: italic; }
-    #spectrum { height: 5; margin: 1 0; }
+    #spectrum { height: 1fr; min-height: 5; margin: 1 0; }
     #state { color: $text-muted; }
     #status { margin-top: 1; }
     #mood { dock: bottom; margin: 0 1 1 1; border: round $panel; background: $surface; }
@@ -274,7 +279,8 @@ class StreamApp(App):
         Binding("up", "volume(1)", "Vol +1"),
         Binding("down", "volume(-1)", "Vol -1"),
         Binding("escape", "leave_mood", show=False),
-        Binding("q", "quit", "Quit"),
+        Binding("b", "back", "Back (keeps playing)"),
+        Binding("q", "quit", "Quit (stops music)"),
     ]
 
     def __init__(self, player: Player, shell: GentleShell, initial_mood: str | None = None,
@@ -283,6 +289,7 @@ class StreamApp(App):
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
         self.presets = presets if presets is not None else PresetStore()
         self.session_usage: Usage | None = None  # tokens and cost of every successful interpretation so far
+        self._keep_playing = False                # `b` leaves the music playing, `q` stops it
         self.register_theme(GENTLEMAN_THEME)
         self.theme = GENTLEMAN_THEME.name
 
@@ -313,18 +320,25 @@ class StreamApp(App):
 
     def on_unmount(self) -> None:
         self.shell.cancel()  # a running gentle-shell would otherwise keep the process alive after quit
-        self.player.close()
+        if self._keep_playing:
+            self.player.detach()
+        else:
+            self.player.close()
 
     # ------------------------------------------------------------ display
     def _tick(self) -> None:
-        now, p = self.player.now, self.player
         w = self._w
+        try:
+            w["spectrum"].tick()   # first: polling a background player also refreshes what is shown below
+        except ConnectionError:    # the background player was stopped elsewhere (`gentle-stream ctl stop`)
+            self.exit(message="gentle-stream: the music was stopped")
+            return
+        now, p = self.player.now, self.player
         w["title"].update(f"♪ {now.style.name}")
         w["details"].update(now.style.summary())
         w["mood-line"].update(f"“{now.style.mood}”" if now.style.mood else "")
         state = "[b $success]▶ Playing[/]" if p.playing else "[b $warning]⏸ Paused[/]"
         w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1} · vol {round(p.volume * 100)}%")
-        w["spectrum"].tick()
 
     def _show_model(self) -> None:
         session = f" · session: {self.session_usage.format()}" if self.session_usage else ""
@@ -334,6 +348,10 @@ class StreamApp(App):
         self._w["status"].update(text)
 
     # ------------------------------------------------------------ actions
+    def action_back(self) -> None:
+        self._keep_playing = True
+        self.exit()
+
     def action_toggle(self) -> None:
         self.player.toggle()
         self._tick()
@@ -402,7 +420,7 @@ class StreamApp(App):
     def _interpret(self, mood: str) -> None:
         worker = get_current_worker()
         try:
-            style, usage = self.shell.interpret_with_usage(mood, self.player.engine.style)
+            style, usage = self.shell.interpret_with_usage(mood, self.player.style)
         except InterpretError as e:
             if not worker.is_cancelled:
                 self.call_from_thread(self._status, f"[$error]Could not interpret the mood:[/] {escape(str(e))}")
