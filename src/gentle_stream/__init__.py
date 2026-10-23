@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 CONTROLS = """controls:
@@ -13,7 +14,13 @@ CONTROLS = """controls:
   p        saved prompts: Enter applies one instantly, d deletes it
   + / -    volume up / down by 5%
   ↑ / ↓    volume up / down by 1%
-  q        quit
+  b        back: leave the app, the music keeps playing
+  q        quit and stop the music
+
+background playback:
+  the music plays in a background player; gentle-stream attaches to it when it is already playing.
+  gentle-stream ctl play|pause|toggle|next|stop|status controls it from any terminal
+  (status prints one JSON line; the others exit 1 when nothing is playing).
 
 saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).
 
@@ -46,7 +53,43 @@ def setup_samples() -> int:
     return 0
 
 
+def ctl(action: str) -> int:
+    from .client import NoPlayer, PlayerError, PlayerGone, connect
+
+    try:
+        player = connect()
+    except NoPlayer:
+        if action == "status":
+            print(json.dumps({"running": False}))
+            return 0
+        print("gentle-stream: nothing is playing", file=sys.stderr)
+        return 1
+    except PlayerError as e:
+        print(f"gentle-stream: {e}", file=sys.stderr)
+        return 1
+    if action == "status":
+        style = player.now.style
+        print(json.dumps({"running": True, "playing": player.playing, "name": style.name, "genre": style.genre,
+                          "mood": style.mood}, ensure_ascii=False))
+    elif action == "stop":
+        player.close()
+        return 0
+    else:
+        try:
+            player.request(action)
+        except PlayerGone:
+            print("gentle-stream: nothing is playing", file=sys.stderr)
+            return 1
+    player.detach()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["daemon"]:   # the background player, started by the TUI; not listed in --help
+        from .daemon import main as daemon_main
+
+        return daemon_main(argv[1:])
     ap = argparse.ArgumentParser(prog="gentle-stream", description=__doc__, epilog=CONTROLS,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", help="model Gentle Shell uses to interpret moods, as provider/id "
@@ -56,7 +99,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="gentle-shell executable (default: %(default)s)")
     sub = ap.add_subparsers(dest="command", metavar="command")
     sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) for sampled instruments, once")
+    ctl_parser = sub.add_parser("ctl", help="control the music playing in the background")
+    ctl_parser.add_argument("action", choices=("play", "pause", "toggle", "next", "stop", "status"))
     args = ap.parse_args(argv)
+    if args.command == "ctl":
+        return ctl(args.action)
     if args.command == "setup-samples":
         from . import samples
 
@@ -67,15 +114,15 @@ def main(argv: list[str] | None = None) -> int:
 
     from .app import StreamApp
     from .bridge import GentleShell
-    from .engine import Engine
-    from .player import Player
+    from .client import AudioError, PlayerError, ensure
 
-    player = Player(Engine())
     try:
-        player.start()
-    except Exception as e:  # PortAudio missing, no output device, device busy...
-        player.close()
+        player = ensure()   # attach to the music already playing, or start the background player
+    except AudioError as e:  # PortAudio missing, no output device, device busy...
         print(f"gentle-stream: cannot open the audio output: {e}", file=sys.stderr)
+        return 1
+    except PlayerError as e:
+        print(f"gentle-stream: {e}", file=sys.stderr)
         return 1
     StreamApp(player, GentleShell(binary=args.gentle_shell, model=args.model), initial_mood=args.mood).run()
     return 0
