@@ -6,7 +6,9 @@ one bar at a time: notes are scheduled into an accumulation buffer (their tails 
 finished bar goes through a master chain whose filters and delay lines keep state between bars, so consecutive
 bars join seamlessly and the stream can run forever.
 
-Style changes and "next" requests are queued from any thread and applied at the next bar boundary.
+What plays in each bar (song form, harmony, melody, counter-melody, bass line) comes from `composer.Composer`;
+this module turns that plan into sound. Style changes and "next" requests are queued from any thread and applied
+at the next bar boundary.
 """
 from __future__ import annotations
 
@@ -16,12 +18,11 @@ from functools import lru_cache
 import numpy as np
 from scipy.signal import butter, sosfilt
 
-from .style import DEFAULT, KEYS, MODES, Style
+from .composer import Composer
+from .style import DEFAULT, KEYS, Style
 
 SR = 44100
 KICK_PATTERNS = ((0, 2), (0, 1.5), (0, 2.5), (0, 1.5, 2))  # quarter-note beats, 0-based
-RHYTHMS = (((0, 1.5), (1.5, .5), (2, 2)), ((0.5, 1), (1.5, 1), (2.5, 1.5)), ((0, 1), (1, 1), (2, .5), (2.5, 1.5)),
-           ((0, 3), (3, 1)), ((1, .5), (1.5, .5), (2, 2)), ((0, 2), (2.5, .5), (3, 1)))
 MASTER_GAIN = 1.6
 
 
@@ -175,23 +176,10 @@ class Engine:
         self.bar = 0
         ton = 48 + KEYS.index(style.key)
         self.ton = ton - 12 if ton > 54 else ton
-        self.scale_iv = MODES[style.mode]
-        self.chords = [self._chord(d - 1, self.rng.random() < 0.55) for d in style.progression]
-        self.scale = sorted({self.ton + 24 + o + 12 * k for o in self.scale_iv for k in (-1, 0, 1)})
-        self.motif = self._make_motif()
+        self.composer = Composer(style, self.seed, self.ton)
+        self.section = self.composer.plan(0).section
         self.kick_beats = (0, 2) if style.drums == "soft" else KICK_PATTERNS[int(self.rng.integers(len(KICK_PATTERNS)))]
         self.center = self.ton + 19
-
-    def _chord(self, d: int, ninth: bool) -> list[int]:
-        sc = self.scale_iv
-
-        def deg(k):
-            return sc[(d + k) % 7] + 12 * ((d + k) // 7)
-
-        iv = [deg(0), deg(2), deg(4), deg(6)]
-        if ninth and deg(4) - deg(0) != 6:  # no ninth on diminished chords
-            iv.append(deg(8))
-        return iv
 
     def _voice(self, iv: list[int]) -> list[int]:
         """Upper chord tones (no root) placed closest to the previous voicing: smooth voice leading."""
@@ -204,21 +192,6 @@ class Engine:
                 m += 12
             out.append(m)
         return sorted(set(out))
-
-    def _make_motif(self):
-        """Two bars of (beat, scale index, length): starts on a chord tone, steps mostly down, one leap up."""
-        r1, r2 = (RHYTHMS[i] for i in self.rng.choice(len(RHYTHMS), 2, replace=False))
-        target = self.ton + 24 + self.scale_iv[int(self.rng.choice([0, 2, 4]))]
-        idx = self.scale.index(min(self.scale, key=lambda m: abs(m - target)))
-        mot, leap = [], False
-        for bar, rh in ((0, r1), (1, r2)):
-            for beat, ln in rh:
-                mot.append((bar * 4 + beat, idx, ln))
-                step = int(self.rng.choice([-1, -1, -2, 1, 0]))
-                if not leap and self.rng.random() < 0.18:
-                    step, leap = 3, True
-                idx = int(np.clip(idx + step, 2, len(self.scale) - 3))
-        return mot
 
     # ------------------------------------------------------------ rendering
     def _add(self, sig, t: float, pan: float = 0.0, g: float = 1.0) -> None:
@@ -250,57 +223,53 @@ class Engine:
 
     def _schedule_bar(self) -> None:
         s, ins, bar = self.style, self.inst, self.bar
+        p = self.composer.plan(bar)
+        self.section = p.section
         B = 60 / s.bpm; BAR = 4 * B
-        if bar > 0 and bar % 16 == 0:
-            self.motif = self._make_motif()
-        intro = bar == 0                 # a new piece opens with chords and bass only
-        breakdown = bar % 32 == 31       # every 32 bars drums and lead drop out for one bar
+        e, k = p.energy, p.key_offset
         chord_fn = getattr(ins, s.chords)
-        iv = self.chords[bar % len(self.chords)]
-        vc = self._voice(iv); self.center = float(np.mean(vc))
-        # chords: soft strum, a quieter re-hit on beat 3 every other bar
-        for k, m in enumerate(vc):
-            self._add(chord_fn(m, BAR * 0.98, 0.8), k * 0.022, (k - 1.5) * 0.18, 0.11)
-        if bar % 2 == 1 and s.energy > 0.25 and not breakdown:
-            for k, m in enumerate(vc[1:]):
-                self._add(chord_fn(m, BAR * 0.45, 0.5), 2 * B + k * 0.02, (k - 1) * 0.2, 0.04 + 0.04 * s.energy)
-        # bass
-        root = iv[0] % 12
-        bm = self.ton - 12 + root if self.ton - 12 + root < 46 else self.ton - 24 + root
-        self._add(ins.sub(bm, BAR * 0.6), 0, 0, 0.30)
-        if not breakdown:
-            self._add(ins.sub(bm + (7 if bar % 2 else 0), BAR * 0.3), 2.5 * B, 0, 0.22)
-        # drums
-        if s.drums != "none" and not intro and not breakdown:
-            dg = 0.7 + 0.6 * s.energy
-            for kb in self.kick_beats:
+        # chords: soft strum; a passing chord takes beats 3-4, otherwise a quieter re-hit there every other bar
+        vc = self._voice([x + k for x in p.chord.tones]); self.center = float(np.mean(vc))
+        for i, m in enumerate(vc):
+            self._add(chord_fn(m, (BAR * 0.98 if p.passing is None else 2 * B), 0.8), i * 0.022, (i - 1.5) * 0.18, 0.11)
+        if p.passing is not None:
+            vp = self._voice([x + k for x in p.passing.tones]); self.center = float(np.mean(vp))
+            for i, m in enumerate(vp):
+                self._add(chord_fn(m, 2 * B * 0.98, 0.7), 2 * B + i * 0.02, (i - 1.5) * 0.18, 0.09)
+        elif bar % 2 == 1 and e > 0.3 and p.section != "breakdown":
+            for i, m in enumerate(vc[1:]):
+                self._add(chord_fn(m, BAR * 0.45, 0.5), 2 * B + i * 0.02, (i - 1) * 0.2, 0.04 + 0.04 * e)
+        # bass: root, back-half note, approach into the next root
+        for i, n in enumerate(p.bass):
+            self._add(ins.sub(n.midi, n.length * B * (0.95 if i else 1.0)), n.beat * B, 0, 0.30 if i == 0 else 0.20)
+        # drums: sparse at low energy, the style's full pattern from the middle up
+        if "drums" in p.layers:
+            dg = 0.7 + 0.6 * e
+            full = e >= 0.45
+            for kb in (self.kick_beats if full else (0,)):
                 self._add(ins.kick(), kb * B, 0, (0.42 if kb == int(kb) else 0.30) * dg)
-            if s.drums == "busy":
+            if s.drums == "busy" and e >= 0.6:
                 self._add(ins.kick(), 3.75 * B, 0, 0.16 * dg)
-            for b in (1, 3):
+            for b in ((1, 3) if full else (3,)):
                 self._add(ins.brush(), b * B + 0.01, 0.08, 0.20 * dg)
-            if s.drums != "soft" and bar % 2:
+            if full and s.drums != "soft" and bar % 2:
                 self._add(ins.rim(), 3 * B + 0.01, -0.1, 0.10 * dg)
-            steps = 4 if s.drums == "busy" else 2
-            hat_g = {"soft": 0.03, "lofi": 0.05, "busy": 0.045}[s.drums]
+            steps = 4 if s.drums == "busy" and e >= 0.6 else 2
+            hat_g = {"soft": 0.03, "lofi": 0.05, "busy": 0.045}[s.drums] * (1.0 if full else 0.6)
             for b in range(4):
                 for h in range(steps):
                     off = h * B / steps + (B * s.swing * 2 / steps if h % 2 else 0)
                     self._add(ins.hat(0.6 if h % 2 else 1.0), b * B + off, -0.3,
                               hat_g * dg * (0.8 + 0.4 * self.rng.random()))
-        # lead: the motif on the first bars of each 8, a lower answer later; density adds phrases
-        if s.lead != "none" and not intro and not breakdown:
-            ph = bar % 8
-            plays = (0, 1) if s.lead_density < 0.34 else (0, 1, 4, 5) if s.lead_density < 0.67 else (0, 1, 2, 4, 5, 6)
-            if ph in plays:
-                lead_fn = getattr(ins, s.lead)
-                shift = -1 if ph >= 4 else 0
-                for beat, idx, ln in self.motif:
-                    if int(beat // 4) != ph % 2:
-                        continue
-                    m = self.scale[int(np.clip(idx + shift, 0, len(self.scale) - 1))]
-                    self._add(lead_fn(m, ln * B * 0.95, 0.9), (beat % 4) * B + 0.012 * self.rng.random(), 0.15,
-                              0.30 if s.lead == "pad" else 0.20)
+        # lead and counter-melody (the counter on the chord instrument, quieter and slower)
+        if "lead" in p.layers:
+            lead_fn = getattr(ins, s.lead)
+            for n in p.melody:
+                self._add(lead_fn(n.midi, n.length * B * 0.95, 0.9), n.beat * B + 0.012 * self.rng.random(), 0.15,
+                          0.30 if s.lead == "pad" else 0.20)
+        if "counter" in p.layers:
+            for n in p.counter:
+                self._add(chord_fn(n.midi, n.length * B * 0.95, 0.6), n.beat * B + 0.03, -0.25, 0.08)
 
     def _master(self, x: np.ndarray) -> np.ndarray:
         s, n, sr = self.style, len(x), self.sr

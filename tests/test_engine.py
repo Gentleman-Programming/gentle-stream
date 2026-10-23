@@ -80,3 +80,16 @@ def test_every_mode_and_instrument_renders(mode):
     for chords, lead in (("piano", "rhodes"), ("nylon", "pad"), ("pad", "none")):
         x = np.concatenate(render(Engine(Style(mode=mode, chords=chords, lead=lead), seed=9), 3))
         assert np.all(np.isfinite(x)) and np.max(np.abs(x)) > 0.01
+
+
+def test_engine_follows_the_song_form():
+    e = Engine(Style(bpm=120), seed=10)
+    seen = []
+    for _ in range(20):
+        e.render_bar()
+        if not seen or seen[-1] != e.section:
+            seen.append(e.section)
+    assert seen == ["intro", "A", "B"]
+    e.queue_next()
+    e.render_bar()
+    assert e.section == "intro" and e.bar == 1
