@@ -1,4 +1,4 @@
-"""gentle-stream: real-time generative lo-fi in the terminal, steered by moods that Gentle Shell interprets."""
+"""gentle-stream: real-time generative music in the terminal (lo-fi by default, plus ambient, chiptune, synthwave, jazz and rock), steered by moods that Gentle Shell interprets."""
 from __future__ import annotations
 
 import argparse

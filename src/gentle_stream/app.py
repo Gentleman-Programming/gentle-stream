@@ -247,7 +247,7 @@ class PresetPicker(ModalScreen[Preset | None]):
 
 class StreamApp(App):
     TITLE = "gentle-stream"
-    SUB_TITLE = "real-time generative lo-fi"
+    SUB_TITLE = "real-time generative music"
     AUTO_FOCUS = None
     CSS = """
     Screen { background: $background; }
