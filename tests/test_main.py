@@ -9,7 +9,8 @@ def test_help_lists_flags_and_controls(capsys):
         main(["--help"])
     out = capsys.readouterr().out
     assert exit_info.value.code == 0
-    for text in ("--model", "--mood", "--gentle-shell", "play / pause", "next piece", "describe a mood"):
+    for text in ("--model", "--mood", "--gentle-shell", "play / pause", "next piece", "describe a mood",
+                 "save what is playing", "saved prompts", "presets.json"):
         assert text in out
 
 

@@ -63,9 +63,22 @@ instruments. The sub bass stays synthesized either way, and the lo-fi master cha
 | `n` | Next piece with the same mood: new key, progression, melody and groove |
 | `/` | Describe a mood, `Enter` to send, `Esc` to leave the input |
 | `m` | Choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`) |
+| `s` | Save what is playing under a name (`Enter` saves, `Esc` cancels) |
+| `p` | Saved prompts: `Enter` applies one instantly, `d` / `Delete` removes it, `Esc` closes |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
 | `q` | Quit |
+
+## Saved prompts
+
+Liked what a mood turned into? Press `s` and give it a name. gentle-stream saves the prompt together with the
+musical parameters it produced (key, mode, tempo, progression, instruments, colour). Press `p` later to apply it:
+it starts at the next bar, sounds like it did when you saved it and needs no model call. Every piece is still
+newly generated.
+
+Saved prompts live in `~/.config/gentle-stream/presets.json` (or `$XDG_CONFIG_HOME/gentle-stream/presets.json`).
+The file is plain JSON, rewritten atomically. If it becomes unreadable, the app says so and leaves it untouched;
+invalid entries are skipped and every value is validated like a model answer.
 
 ## How it works
 

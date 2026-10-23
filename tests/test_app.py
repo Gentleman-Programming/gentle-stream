@@ -2,10 +2,11 @@ import threading
 
 import pytest
 
-from gentle_stream.app import ModelPicker, StreamApp
+from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
 from gentle_stream.bridge import InterpretError
 from gentle_stream.engine import Engine
 from gentle_stream.player import Player
+from gentle_stream.presets import PresetStore
 from gentle_stream.style import Style
 from tests.test_player import FakeStream
 
@@ -30,6 +31,12 @@ class FakeShell:
 
     def cancel(self):
         pass
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(monkeypatch, tmp_path):
+    """No test may touch the real ~/.config, even through the default preset store."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
 
 def make_app(shell, **kw):
@@ -226,3 +233,144 @@ async def test_an_error_with_brackets_is_shown_literally():
         await app.workers.wait_for_complete()
         await pilot.pause(0.1)
         assert "bad [model] id" in text(app, "#status")
+
+
+# ------------------------------------------------------------ saved prompts
+RAIN = Style(name="Rainy Café", mood="rainy night in a small café", key="F", mode="dorian", bpm=81.0,
+             progression=(1, 4, 1, 4), chords="rhodes", lead="nylon", drums="soft")
+
+
+@pytest.fixture
+def store(tmp_path):
+    return PresetStore(tmp_path / "presets.json")
+
+
+@pytest.mark.asyncio
+async def test_s_saves_the_audible_style_under_a_typed_name(store):
+    app, player = make_app(FakeShell(), presets=store)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        audible = player.now.style
+        await pilot.press("s")
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, SaveDialog)
+        field = app.screen.query_one("Input")
+        assert field.value == audible.name               # prefilled with the style name
+        field.value = ""
+        await pilot.press(*"late night", "enter")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, SaveDialog)
+        assert "Saved “late night”" in text(app, "#status")
+        preset = store.get("late night")
+        assert preset.style.to_dict() == {**audible.to_dict(), "name": "late night"}
+        assert preset.mood == audible.mood
+        assert app.query_one("#mood").value == ""        # the dialog's Enter is not a mood request
+
+
+@pytest.mark.asyncio
+async def test_saving_an_existing_name_says_it_replaced_it(store):
+    store.save("Late Night", RAIN)
+    app, _ = make_app(FakeShell(), presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("s")
+        await pilot.pause(0.1)
+        app.screen.query_one("Input").value = "late night"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert "Replaced “late night”" in text(app, "#status")
+        assert [p.name for p in store.list()] == ["late night"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_name_is_rejected(store):
+    shell = FakeShell()
+    app, _ = make_app(shell, presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("s")
+        await pilot.pause(0.1)
+        app.screen.query_one("Input").value = "   "
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, SaveDialog)
+        assert "empty" in text(app.screen, "#save-status").lower()
+        assert store.list() == [] and shell.calls == []
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_the_save_dialog(store):
+    app, player = make_app(FakeShell(), presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("s")
+        await pilot.pause(0.1)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, SaveDialog)
+        assert store.list() == []
+        await pilot.press("space")                     # keys control playback again
+        assert not player.playing
+
+
+@pytest.mark.asyncio
+async def test_p_applies_a_saved_prompt_instantly_without_gentle_shell(store):
+    store.save("Archive", Style(mood="old tapes"))
+    saved, _ = store.save("Rainy Café", RAIN)
+    shell = FakeShell(answer={"name": "unused"})
+    app, player = make_app(shell, presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, PresetPicker)
+        listed = str(app.screen.query_one("OptionList").get_option_at_index(1).prompt)
+        assert "Rainy Café" in listed and "rainy night in a small café" in listed
+        await pilot.press("down", "enter")             # Archive, Rainy Café
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, PresetPicker)
+        assert shell.calls == []
+        queued = player.engine._pending_style or player.engine.style
+        assert queued == saved.style
+        assert (queued.name, queued.mood) == ("Rainy Café", "rainy night in a small café")
+        assert "Up next: Rainy Café (saved)" in text(app, "#status")
+
+
+@pytest.mark.asyncio
+async def test_d_deletes_the_highlighted_preset(store):
+    store.save("Archive", Style())
+    store.save("Rainy Café", RAIN)
+    app, _ = make_app(FakeShell(), presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.pause(0.1)
+        await pilot.press("d")
+        await pilot.pause(0.1)
+        assert [p.name for p in store.list()] == ["Rainy Café"]
+        assert app.screen.query_one("OptionList").option_count == 1
+        await pilot.press("delete")
+        await pilot.pause(0.1)
+        assert store.list() == []
+        assert "No saved prompts yet" in text(app.screen, "#presets-status")
+
+
+@pytest.mark.asyncio
+async def test_an_empty_store_shows_a_hint_and_escape_closes_the_presets(store):
+    app, player = make_app(FakeShell(), presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.pause(0.1)
+        assert "No saved prompts yet" in text(app.screen, "#presets-status")
+        await pilot.press("enter")
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, PresetPicker)
+        assert player.engine._pending_style is None
+
+
+@pytest.mark.asyncio
+async def test_a_corrupt_presets_file_is_reported_in_the_picker(tmp_path):
+    path = tmp_path / "presets.json"
+    path.write_text("{oops", encoding="utf-8")
+    app, _ = make_app(FakeShell(), presets=PresetStore(path))
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.pause(0.1)
+        assert "presets.json" in text(app.screen, "#presets-status")
+    assert path.read_text(encoding="utf-8") == "{oops"

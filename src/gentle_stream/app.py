@@ -1,7 +1,8 @@
 """Interactive TUI: what is playing, a live spectrum, play/pause/next, and a mood prompt.
 
 The mood is interpreted by Gentle Shell in a thread worker while the music keeps playing; the new style starts at
-the next bar. Everything shown comes from `player.now`, i.e. the bar that is audible right now.
+the next bar. Everything shown comes from `player.now`, i.e. the bar that is audible right now. What is audible can
+be saved under a name and applied later, instantly, without asking Gentle Shell again.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from textual.worker import get_current_worker
 
 from .bridge import GentleShell, InterpretError
 from .player import Player
+from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
 BLOCKS = " ▁▂▃▄▅▆▇█"
@@ -134,6 +136,114 @@ class ModelPicker(ModalScreen[str | None]):
         self.dismiss(self.shell.model)
 
 
+class SaveDialog(ModalScreen[str | None]):
+    """Name the style that is audible now; Enter saves, Esc cancels."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    SaveDialog { align: center middle; }
+    SaveDialog > Vertical { width: 60; height: auto; border: round $primary; padding: 0 1; background: $surface; }
+    SaveDialog .heading { color: $primary; text-style: bold; }
+    SaveDialog #save-status { color: $text-muted; }
+    SaveDialog Input { border: round $panel; background: $surface; }
+    SaveDialog Input:focus { border: round $primary; }
+    """
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.initial = name
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Save what is playing", classes="heading")
+            yield Input(self.initial, placeholder="Name", max_length=NAME_MAX, id="save-name")
+            yield Static("Enter to save · Esc to cancel", id="save-status")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()  # otherwise it bubbles to the app and is taken as a mood
+        try:
+            self.dismiss(normalize_name(event.value))
+        except PresetError as e:
+            self.query_one("#save-status", Static).update(f"[$error]{escape(str(e))}[/]")
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class PresetPicker(ModalScreen[Preset | None]):
+    """Saved prompts: Enter applies the highlighted one, d deletes it, Esc closes."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Close"),
+        Binding("d,delete", "delete", "Delete"),
+    ]
+    DEFAULT_CSS = """
+    PresetPicker { align: center middle; }
+    PresetPicker > Vertical { width: 72; height: auto; max-height: 80%; border: round $primary; padding: 0 1;
+                              background: $surface; }
+    PresetPicker .heading { color: $primary; text-style: bold; }
+    PresetPicker #presets-status { color: $text-muted; }
+    PresetPicker OptionList, PresetPicker OptionList:focus { height: auto; max-height: 20; border: none;
+                                                            background: $surface; }
+    """
+    EMPTY = "No saved prompts yet — press s to save what is playing"
+
+    def __init__(self, store: PresetStore):
+        super().__init__()
+        self.store = store
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Saved prompts", classes="heading")
+            yield Static(id="presets-status")
+            yield OptionList(id="presets")
+
+    def on_mount(self) -> None:
+        options = self.query_one(OptionList)
+        options.add_options([Option(Text(f"{p.name} — {p.mood or p.style.summary()}"), id=p.name)
+                             for p in self.store.list()])
+        if options.option_count:
+            options.highlighted = 0
+        self._show_status(self.store.error)
+        options.focus()
+
+    def _show_status(self, error: str | None = None) -> None:
+        if error:
+            text = f"[$error]{escape(error)}[/]"
+        elif self.query_one(OptionList).option_count:
+            text = "Enter to apply · d to delete · Esc to close"
+        else:
+            text = self.EMPTY
+        self.query_one("#presets-status", Static).update(text)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        preset = self.store.get(event.option.id)
+        if preset is None:
+            self._show_status(self.store.error or f"“{event.option.id}” is no longer saved.")
+            return
+        self.dismiss(preset)
+
+    def action_delete(self) -> None:
+        options = self.query_one(OptionList)
+        if options.highlighted is None:
+            return
+        option = options.get_option_at_index(options.highlighted)
+        try:
+            self.store.delete(option.id)
+        except PresetError as e:
+            self._show_status(str(e))
+            return
+        options.remove_option(option.id)
+        self._show_status()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class StreamApp(App):
     TITLE = "gentle-stream"
     SUB_TITLE = "real-time generative lo-fi"
@@ -156,6 +266,8 @@ class StreamApp(App):
         Binding("n", "next", "Next"),
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
+        Binding("s", "save_preset", "Save"),
+        Binding("p", "pick_preset", "Saved"),
         Binding("plus,equals_sign", "volume(5)", "Vol +5"),
         Binding("minus", "volume(-5)", "Vol -5"),
         Binding("up", "volume(1)", "Vol +1"),
@@ -164,9 +276,11 @@ class StreamApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, player: Player, shell: GentleShell, initial_mood: str | None = None):
+    def __init__(self, player: Player, shell: GentleShell, initial_mood: str | None = None,
+                 presets: PresetStore | None = None):
         super().__init__()
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
+        self.presets = presets if presets is not None else PresetStore()
         self.register_theme(GENTLEMAN_THEME)
         self.theme = GENTLEMAN_THEME.name
 
@@ -242,6 +356,32 @@ class StreamApp(App):
             self._show_model()
 
         self.push_screen(ModelPicker(self.shell), chosen)
+
+    # ------------------------------------------------------------ saved prompts
+    def action_save_preset(self) -> None:
+        style = self.player.now.style  # what is audible, captured before the dialog opens
+
+        def named(name: str | None) -> None:
+            if name is None:
+                return
+            try:
+                preset, replaced = self.presets.save(name, style)
+            except PresetError as e:
+                self._status(f"[$error]Could not save:[/] {escape(str(e))}")
+                return
+            self._status(f"{'Replaced' if replaced else 'Saved'} “{escape(preset.name)}”")
+
+        self.push_screen(SaveDialog(style.name), named)
+
+    def action_pick_preset(self) -> None:
+        def chosen(preset: Preset | None) -> None:
+            if preset is None:
+                return
+            self.workers.cancel_group(self, "interpret")  # a late interpretation must not override the choice
+            self.player.set_style(preset.style)
+            self._status(f"Up next: [b]{escape(preset.name)}[/b] (saved)")
+
+        self.push_screen(PresetPicker(self.presets), chosen)
 
     # ------------------------------------------------------------ mood interpretation
     def on_input_submitted(self, event: Input.Submitted) -> None:

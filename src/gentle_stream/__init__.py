@@ -9,9 +9,13 @@ CONTROLS = """controls:
   n        next piece with the same mood
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
   m        choose the model Gentle Shell uses
+  s        save what is playing under a name (prompt and style)
+  p        saved prompts: Enter applies one instantly, d deletes it
   + / -    volume up / down by 5%
   ↑ / ↓    volume up / down by 1%
   q        quit
+
+saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).
 
 sampled instruments (optional):
   gentle-stream setup-samples downloads the FluidR3_GM soundfont (MIT) once into the user cache;
