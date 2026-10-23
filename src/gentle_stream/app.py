@@ -156,8 +156,10 @@ class StreamApp(App):
         Binding("n", "next", "Next"),
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
-        Binding("plus,equals_sign", "volume(0.1)", "Vol +"),
-        Binding("minus", "volume(-0.1)", "Vol -"),
+        Binding("plus,equals_sign", "volume(5)", "Vol +5"),
+        Binding("minus", "volume(-5)", "Vol -5"),
+        Binding("up", "volume(1)", "Vol +1"),
+        Binding("down", "volume(-1)", "Vol -1"),
         Binding("escape", "leave_mood", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -223,8 +225,9 @@ class StreamApp(App):
         self.player.next()
         self._status("Next piece, same mood.")
 
-    def action_volume(self, delta: float) -> None:
-        self.player.set_volume(round(self.player.volume + delta, 2))
+    def action_volume(self, percent: int) -> None:
+        """Change the volume by whole percentage points, so repeated steps never drift."""
+        self.player.set_volume((round(self.player.volume * 100) + percent) / 100)
         self._tick()
 
     def action_focus_mood(self) -> None:

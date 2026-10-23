@@ -143,14 +143,42 @@ async def test_m_picks_the_model_gentle_shell_uses():
 
 
 @pytest.mark.asyncio
-async def test_volume_keys_change_the_volume():
+async def test_plus_and_minus_change_the_volume_in_steps_of_5():
     app, player = make_app(FakeShell())
     async with app.run_test() as pilot:
-        before = player.volume
+        assert player.volume == pytest.approx(0.8)
         await pilot.press("minus")
-        assert player.volume == pytest.approx(before - 0.1)
+        assert player.volume == pytest.approx(0.75)
+        await pilot.pause(0.1)
+        assert "vol 75%" in text(app, "#state")
+        await pilot.press("plus", "plus")
+        assert player.volume == pytest.approx(0.85)
+
+
+@pytest.mark.asyncio
+async def test_up_and_down_change_the_volume_in_steps_of_1():
+    app, player = make_app(FakeShell())
+    async with app.run_test() as pilot:
+        await pilot.press("down")
+        assert player.volume == pytest.approx(0.79)
+        await pilot.pause(0.1)
+        assert "vol 79%" in text(app, "#state")
+        await pilot.press("up", "up")
+        assert player.volume == pytest.approx(0.81)
+
+
+@pytest.mark.asyncio
+async def test_volume_steps_stop_at_0_and_100_percent():
+    app, player = make_app(FakeShell())
+    async with app.run_test() as pilot:
+        player.set_volume(0.03)
+        await pilot.press("minus")
+        assert player.volume == 0.0
+        player.set_volume(0.98)
         await pilot.press("plus")
-        assert player.volume == pytest.approx(before)
+        assert player.volume == 1.0
+        await pilot.press("down")
+        assert player.volume == pytest.approx(0.99)
 
 
 @pytest.mark.asyncio

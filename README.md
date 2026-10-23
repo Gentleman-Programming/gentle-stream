@@ -63,7 +63,8 @@ instruments. The sub bass stays synthesized either way, and the lo-fi master cha
 | `n` | Next piece with the same mood: new key, progression, melody and groove |
 | `/` | Describe a mood, `Enter` to send, `Esc` to leave the input |
 | `m` | Choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`) |
-| `+` / `-` | Volume |
+| `+` / `-` | Volume up / down by 5% |
+| `↑` / `↓` | Volume up / down by 1% |
 | `q` | Quit |
 
 ## How it works
