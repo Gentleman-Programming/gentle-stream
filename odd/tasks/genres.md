@@ -28,10 +28,10 @@ Branch: `feat/realtime-music-tui` (local, no remote). Delivery: `exception-ok` (
 | G4 jazz | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
 | G5 rock/metal | S2, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
 
-| G6 electro | S6, S4, S5 | delegated, parallel writer | pending | — |
-| G7 cumbia | S6, S4, S5 | delegated, parallel writer | pending | — |
-| G8 dubstep | S6, S4, S5 | delegated, parallel writer | pending | — |
-| G9 electrohouse | S6, S4, S5 | delegated, parallel writer | pending | — |
+| G6 electro | S6, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G7 cumbia | S6, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G8 dubstep | S6, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
+| G9 electrohouse | S6, S4, S5 | delegated, parallel writer | done | RED vs placeholder → GREEN; genre + contract tests green |
 
 Route evidence: G1-G5 are independent units with disjoint edit surfaces (one module + one test file each), each clearly heavier than a subagent start → Writer trigger (a) parallelism; parent owns git and runs one seam check (full suite) at the end.
 
@@ -39,6 +39,7 @@ Route evidence: G1-G5 are independent units with disjoint edit surfaces (one mod
 
 - L1 (2026-10-23, user): "hagamos algo, que no sea solo lofi, que se pueda tambien generar diferentes estilos pero que por defecto sea lofi"
 - L2 (2026-10-23, user answer): selected "Ambient elegante, Chiptune / 8-bit, Synthwave, Jazz"; custom: "algo de metal o rock se podra?"
+- L8 (seam check G6-G9): electro 9f94756, cumbia 3e0e5d5, dubstep 6a74d88, electrohouse 9f7d976; README genres table updated; 328 passed (P1-owned test files excluded while that writer runs). Delivery: pushed straight to the public main as the user asked to publish (no PR flow in this repo); slice boundary = this push.
 - L7 (2026-10-23, user): "mientras mete 3 estilos mas: electro, cumbia, dubsteb"; then "ah y agrega electro house". Placeholders registered by the parent (electro, electrohouse, cumbia, dubstep); tests listing genre names updated; 302 passed.
 - L6: repo published public at https://github.com/Gentleman-Programming/gentle-stream (main = 10b47c5); `uv tool install 'gentle-stream[samples] @ git+https://github.com/Gentleman-Programming/gentle-stream'` verified in a temp UV_TOOL_DIR.
 - L5 (seam check): all five genres, U1 token display (3b4da86) and the FluidSynth voice-state root fix (1afccd4: every note primes a throw-away note) committed; full suite 278 passed; tree clean. Listening files: out/genre-<name>-{procedural,samples}.wav (seed 21, 120 s); nobody has listened yet (levels balanced by RMS). Measured real codex interpretation: ~2.2k tokens, ~US$0.00026.
