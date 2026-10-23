@@ -3,7 +3,7 @@ import threading
 import pytest
 
 from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
-from gentle_stream.bridge import InterpretError
+from gentle_stream.bridge import InterpretError, Usage
 from gentle_stream.engine import Engine
 from gentle_stream.player import Player
 from gentle_stream.presets import PresetStore
@@ -12,8 +12,9 @@ from tests.test_player import FakeStream
 
 
 class FakeShell:
-    def __init__(self, answer=None, error=None, models=("claude-bridge/claude-haiku-5-5", "openai-codex/gpt-6-luna")):
-        self.answer, self.error, self.models = answer, error, list(models)
+    def __init__(self, answer=None, error=None, models=("claude-bridge/claude-haiku-5-5", "openai-codex/gpt-6-luna"),
+                 usage=None):
+        self.answer, self.error, self.models, self.usage = answer, error, list(models), usage
         self.model = None
         self.calls = []
         self.release = threading.Event()
@@ -25,6 +26,9 @@ class FakeShell:
         if self.error:
             raise InterpretError(self.error)
         return Style.from_dict({**self.answer, "mood": mood}, current)
+
+    def interpret_with_usage(self, mood, current):
+        return self.interpret(mood, current), self.usage
 
     def list_models(self):
         return self.models
@@ -233,6 +237,60 @@ async def test_an_error_with_brackets_is_shown_literally():
         await app.workers.wait_for_complete()
         await pilot.pause(0.1)
         assert "bad [model] id" in text(app, "#status")
+
+
+# ------------------------------------------------------------ token usage
+CALL = Usage(input=17000, output=700, cache_write=16000, total=17700, cost_usd=0.00075)
+
+
+@pytest.mark.asyncio
+async def test_each_interpretation_shows_its_usage_and_the_session_total_adds_up():
+    shell = FakeShell(answer={"name": "Summer Storm"}, usage=CALL)
+    shell.model = "openai-codex/gpt-6-luna"
+    app, _ = make_app(shell)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        assert "session" not in text(app, "#model")       # nothing spent yet
+        await pilot.press("slash", *"storm", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        status = text(app, "#status")
+        assert "Up next: Summer Storm" in status and "17.7k tokens · $0.0008" in status
+        assert text(app, "#model") == "model: openai-codex/gpt-6-luna · session: 17.7k tokens · $0.0008"
+        await pilot.press("slash", *"again", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert "session: 35.4k tokens · $0.0015" in text(app, "#model")
+
+
+@pytest.mark.asyncio
+async def test_unknown_usage_shows_the_style_and_adds_nothing():
+    app, _ = make_app(FakeShell(answer={"name": "Old Shell"}))
+    async with app.run_test() as pilot:
+        await pilot.press("slash", *"x", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert "Up next: Old Shell" in text(app, "#status") and "tokens" not in text(app, "#status")
+        assert "session" not in text(app, "#model")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_interpretation_adds_nothing_to_the_session(store):
+    shell = FakeShell(answer={"name": "Ok"}, usage=CALL)
+    app, _ = make_app(shell, presets=store)
+    async with app.run_test() as pilot:
+        await pilot.press("slash", *"ok", "enter")
+        await app.workers.wait_for_complete()
+        shell.error = "boom"
+        await pilot.press("slash", *"bad", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert "boom" in text(app, "#status")
+        assert "session: 17.7k tokens · $0.0008" in text(app, "#model")
+        store.save("Rain", RAIN)
+        await pilot.press("p", "enter")                  # applying a saved prompt is free
+        await pilot.pause(0.1)
+        assert "session: 17.7k tokens · $0.0008" in text(app, "#model")
 
 
 # ------------------------------------------------------------ saved prompts

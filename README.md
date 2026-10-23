@@ -69,6 +69,14 @@ instruments. The sub bass stays synthesized either way, and the genre's master c
 | `↑` / `↓` | Volume up / down by 1% |
 | `q` | Quit |
 
+## Token usage
+
+Only describing a mood calls a model. After each interpretation the status line shows what that call used
+(`Up next: … · 17.7k tokens · $0.0001`), and the model line keeps a running total for the session
+(`model: … · session: 35.4k tokens · $0.0015`). The cost is the one Gentle Shell reports in US dollars; providers
+used through a subscription (such as `claude-bridge`) report `$0.0000`. Failed or cancelled requests add nothing.
+Playback, `n`, pause, volume and saved prompts never call a model, so they cost no tokens.
+
 ## Saved prompts
 
 Liked what a mood turned into? Press `s` and give it a name. gentle-stream saves the prompt together with the
@@ -110,8 +118,10 @@ Today only `lofi` is implemented; the other five are placeholders that play the 
   copies samples. `next` renders the new piece's first bar immediately and crossfades it over the old one.
   The screen shows the bar you are hearing, not the one being rendered.
 - **Mood interpretation** (`bridge.py`): runs
-  `gentle-shell -- -p --no-session -nt -ns -np -nc --no-mcp --no-themes --no-skill-registry --thinking off
-  [--model …] "<prompt>"` and expects one JSON object with `name`, `genre`, `key`, `mode`, `bpm`, `progression`,
+  `gentle-shell -- -p --mode json --no-session -nt -ns -np -nc --no-mcp --no-themes --no-skill-registry
+  --thinking off [--model …] "<prompt>"`, reads the answer text and token usage from the final assistant
+  `message_end` event (plain-text output from older Gentle Shell versions still works, without usage) and expects
+  one JSON object with `name`, `genre`, `key`, `mode`, `bpm`, `progression`,
   `chords`, `lead`, `drums`, `energy`, `brightness`, `swing`, `vinyl`, `space` and `lead_density`. Every value is
   validated and clamped; anything missing keeps the current style. Extensions stay enabled because some model
   providers (such as `claude-bridge`) are extensions. A request takes a few seconds; the music keeps playing

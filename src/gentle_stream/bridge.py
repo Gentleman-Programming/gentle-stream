@@ -1,7 +1,8 @@
 """Mood interpretation through Gentle Shell.
 
-Runs `gentle-shell -- -p` non-interactively (no session, no tools, no context files) with the model the person
-chose, asks for a JSON object describing the music, and validates it into a `Style`.
+Runs `gentle-shell -- -p --mode json` non-interactively (no session, no tools, no context files) with the model the
+person chose, asks for a JSON object describing the music, and validates it into a `Style`. The JSONL events also
+carry the token usage and cost of the call.
 """
 from __future__ import annotations
 
@@ -65,6 +66,66 @@ def genre_lines() -> str:
 
 class InterpretError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Tokens and cost (USD, as reported by Gentle Shell) of one or more model calls."""
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+    total: int = 0
+    cost_usd: float = 0.0
+
+    def __add__(self, other: Usage) -> Usage:
+        return Usage(self.input + other.input, self.output + other.output, self.cache_read + other.cache_read,
+                     self.cache_write + other.cache_write, self.total + other.total, self.cost_usd + other.cost_usd)
+
+    def format(self) -> str:
+        if self.total >= 1_000_000:
+            tokens = f"{self.total / 1_000_000:.3g}M"
+        elif self.total >= 1000:
+            tokens = f"{self.total / 1000:.1f}k"
+        else:
+            tokens = str(self.total)
+        return f"{tokens} tokens · ${self.cost_usd:.4f}"
+
+    @classmethod
+    def from_event(cls, usage: dict) -> Usage:
+        cost = usage.get("cost") or {}
+        return cls(input=int(usage.get("input") or 0), output=int(usage.get("output") or 0),
+                   cache_read=int(usage.get("cacheRead") or 0), cache_write=int(usage.get("cacheWrite") or 0),
+                   total=int(usage.get("totalTokens") or 0), cost_usd=float(cost.get("total") or 0.0))
+
+
+def parse_output(stdout: str) -> tuple[str, Usage | None]:
+    """The answer text and usage of the last assistant message in `--mode json` output.
+
+    Output that is not JSONL (an older Gentle Shell) is the answer itself, with unknown usage.
+    """
+    message = None
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return stdout, None
+        if (isinstance(event, dict) and event.get("type") == "message_end"
+                and isinstance(event.get("message"), dict) and event["message"].get("role") == "assistant"):
+            message = event["message"]
+    if message is None:
+        return stdout, None
+    if message.get("stopReason") == "error" and message.get("errorMessage"):
+        raise InterpretError(str(message["errorMessage"]).strip().splitlines()[-1])
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content
+    else:
+        text = "".join(p.get("text", "") for p in content or [] if isinstance(p, dict) and p.get("type") == "text")
+    usage = message.get("usage")
+    return text, Usage.from_event(usage) if isinstance(usage, dict) else None
 
 
 def extract_json(text: str) -> dict:
@@ -132,21 +193,26 @@ class GentleShell:
             self._kill(proc)
 
     def command(self, prompt: str) -> list[str]:
-        args = ["-p", *QUIET_FLAGS, "--thinking", "off"]
+        args = ["-p", "--mode", "json", *QUIET_FLAGS, "--thinking", "off"]
         if self.model:
             args += ["--model", self.model]
         return [*args, prompt]
 
     def interpret(self, mood: str, current: Style) -> Style:
         """Blocking: ask the model for the style of `mood`; fields it omits keep `current`."""
+        return self.interpret_with_usage(mood, current)[0]
+
+    def interpret_with_usage(self, mood: str, current: Style) -> tuple[Style, Usage | None]:
+        """Like `interpret`, plus the tokens and cost of the call (None when Gentle Shell does not report them)."""
         cur = current.to_dict()
         cur.pop("mood", None)
         prompt = PROMPT.format(mood=mood, current=json.dumps(cur), keys=", ".join(KEYS), modes=", ".join(MODES),
                                chords=", ".join(CHORD_INSTRUMENTS), leads=", ".join(LEAD_INSTRUMENTS),
                                drums=", ".join(DRUMS), genre_names=", ".join(GENRE_NAMES), genres=genre_lines())
-        data = extract_json(self._run(self.command(prompt)))
+        text, usage = parse_output(self._run(self.command(prompt)))
+        data = extract_json(text)
         data["mood"] = mood
-        return Style.from_dict(data, current)
+        return Style.from_dict(data, current), usage
 
     def list_models(self) -> list[str]:
         """`provider/model` ids Gentle Shell can use."""

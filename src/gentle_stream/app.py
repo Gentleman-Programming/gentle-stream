@@ -18,9 +18,10 @@ from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from .bridge import GentleShell, InterpretError
+from .bridge import GentleShell, InterpretError, Usage
 from .player import Player
 from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
+from .style import Style
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
 BLOCKS = " ▁▂▃▄▅▆▇█"
@@ -281,6 +282,7 @@ class StreamApp(App):
         super().__init__()
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
         self.presets = presets if presets is not None else PresetStore()
+        self.session_usage: Usage | None = None  # tokens and cost of every successful interpretation so far
         self.register_theme(GENTLEMAN_THEME)
         self.theme = GENTLEMAN_THEME.name
 
@@ -325,7 +327,8 @@ class StreamApp(App):
         w["spectrum"].tick()
 
     def _show_model(self) -> None:
-        self._w["model"].update(f"model: {model_label(self.shell.model)}")
+        session = f" · session: {self.session_usage.format()}" if self.session_usage else ""
+        self._w["model"].update(f"model: {escape(model_label(self.shell.model))}{session}")
 
     def _status(self, text: str) -> None:
         self._w["status"].update(text)
@@ -399,7 +402,7 @@ class StreamApp(App):
     def _interpret(self, mood: str) -> None:
         worker = get_current_worker()
         try:
-            style = self.shell.interpret(mood, self.player.engine.style)
+            style, usage = self.shell.interpret_with_usage(mood, self.player.engine.style)
         except InterpretError as e:
             if not worker.is_cancelled:
                 self.call_from_thread(self._status, f"[$error]Could not interpret the mood:[/] {escape(str(e))}")
@@ -407,4 +410,11 @@ class StreamApp(App):
         if worker.is_cancelled:
             return
         self.player.set_style(style)
-        self.call_from_thread(self._status, f"Up next: [b]{style.name}[/b] · {style.summary()}")
+        self.call_from_thread(self._interpreted, style, usage)
+
+    def _interpreted(self, style: Style, usage: Usage | None) -> None:
+        cost = f" · {usage.format()}" if usage else ""
+        self._status(f"Up next: [b]{escape(style.name)}[/b] · {escape(style.summary())}{cost}")
+        if usage:
+            self.session_usage = usage if self.session_usage is None else self.session_usage + usage
+            self._show_model()

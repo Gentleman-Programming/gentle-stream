@@ -5,13 +5,33 @@ import textwrap
 
 import pytest
 
-from gentle_stream.bridge import GentleShell, InterpretError
+from gentle_stream.bridge import GentleShell, InterpretError, Usage
 from gentle_stream.style import Style
 
 MODELS_TABLE = """provider       model              context  max-out  thinking  images
 claude-bridge  claude-haiku-5-5   1M       128K     yes       yes
 openai-codex   gpt-6-luna         400K     128K     yes       yes
 """
+
+USAGE = {"input": 1069, "output": 14, "cacheRead": 200, "cacheWrite": 16400, "reasoning": 0, "totalTokens": 17683,
+         "cost": {"input": 0.0001069, "output": 7e-06, "cacheRead": 0, "cacheWrite": 0, "total": 0.0001139}}
+
+
+def jsonl(*parts, usage=USAGE):
+    """What `gentle-shell -- -p --mode json` prints: one event per line, the answer in the assistant message_end."""
+    events = [
+        {"type": "session", "version": 3, "id": "s"},
+        {"type": "message_end", "message": {"role": "user", "content": [{"type": "text", "text": "{\"name\": \"no\"}"}]}},
+        {"type": "message_update", "usage": usage, "assistantMessageEvent": {"type": "text_delta", "delta": "{"}},
+        {"type": "message_end", "message": {"role": "assistant", "content": list(parts), "usage": usage,
+                                            "stopReason": "stop"}},
+        {"type": "agent_end", "messages": []},
+    ]
+    return "".join(json.dumps(e) + "\n" for e in events)
+
+
+def text(t):
+    return {"type": "text", "text": t}
 
 
 @pytest.fixture
@@ -43,7 +63,7 @@ def test_interpret_turns_the_answer_into_a_style(fake):
     run, _ = fake
     answer = {"name": "Neon Rain", "key": "E", "mode": "minor", "bpm": 68, "progression": [1, 6, 3, 7],
               "chords": "rhodes", "lead": "nylon", "drums": "soft", "energy": 0.3}
-    gs = GentleShell(binary=str(run(json.dumps(answer))))
+    gs = GentleShell(binary=str(run(jsonl(text(json.dumps(answer))))))
     s = gs.interpret("lluvia de neón en Tokio a las 3am", Style(space=0.8))
     assert (s.name, s.key, s.bpm, s.chords, s.lead, s.drums) == ("Neon Rain", "E", 68.0, "rhodes", "nylon", "soft")
     assert s.mood == "lluvia de neón en Tokio a las 3am"   # the user's words, not the model's
@@ -57,6 +77,7 @@ def test_command_runs_non_interactive_with_the_chosen_model(fake):
     assert args[0] == "--" and "-p" in args and "--no-session" in args and "-nt" in args
     assert args[args.index("--model") + 1] == "claude-bridge/claude-haiku-5-5"
     assert "calm" in args[-1] and '"progression"' in args[-1]
+    assert args[args.index("--mode") + 1] == "json"
 
 
 def test_without_a_model_gentle_shell_uses_its_default(fake):
@@ -145,3 +166,37 @@ def test_the_model_picks_the_genre_and_invalid_ones_keep_the_current(fake):
     assert s.genre == "jazz"
     s = GentleShell(binary=str(run('{"name": "x", "genre": "polka"}'))).interpret("x", Style(genre="rock"))
     assert s.genre == "rock"
+
+
+# ------------------------------------------------------------ token usage
+def test_interpret_with_usage_reads_the_text_and_usage_of_the_assistant_message(fake):
+    run, _ = fake
+    out = jsonl({"type": "thinking", "thinking": '{"name": "Thought"}'},
+                text('Sure!\n```json\n{"name": "Fenced",'), text(' "bpm": 90}\n```'))
+    s, usage = GentleShell(binary=str(run(out))).interpret_with_usage("x", Style())
+    assert (s.name, s.bpm) == ("Fenced", 90.0)        # text parts joined, thinking and the user message ignored
+    assert usage == Usage(input=1069, output=14, cache_read=200, cache_write=16400, total=17683, cost_usd=0.0001139)
+
+
+def test_plain_text_output_still_works_with_unknown_usage(fake):
+    run, _ = fake
+    s, usage = GentleShell(binary=str(run('{"name": "Old Shell"}'))).interpret_with_usage("x", Style())
+    assert s.name == "Old Shell" and usage is None
+
+
+def test_an_assistant_message_without_json_is_an_error(fake):
+    run, _ = fake
+    with pytest.raises(InterpretError, match="no JSON"):
+        GentleShell(binary=str(run(jsonl(text("I cannot help with that."))))).interpret("x", Style())
+
+
+def test_usage_formats_compactly_and_adds_up():
+    a = Usage(input=1069, output=14, cache_read=200, cache_write=16400, total=17683, cost_usd=0.0001139)
+    b = Usage(input=17000, output=700, total=17700, cost_usd=0.0014)
+    assert a.format() == "17.7k tokens · $0.0001"
+    assert Usage(total=850).format() == "850 tokens · $0.0000"
+    assert Usage(total=1_250_000, cost_usd=1.5).format() == "1.25M tokens · $1.5000"
+    total = a + b
+    assert (total.input, total.output, total.total) == (18069, 714, 35383)
+    assert total.cost_usd == pytest.approx(0.0015139)
+    assert total.format() == "35.4k tokens · $0.0015"
