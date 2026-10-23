@@ -18,8 +18,8 @@ Branch: `feat/realtime-music-tui` (new standalone repo, no remote). Delivery: `e
 
 | ID | Specs | Route | Status | Evidence |
 |----|-------|-------|--------|----------|
-| T1 | S2 | inline | pending | — |
-| T2 | S3, S5 | inline | pending | — |
+| T1 | S2 | inline | done | `56ddb3b`; 20 tests green (no RED: port written before tests, see L5) |
+| T2 | S3, S5 | inline | done | `b23e274`; RED (module missing) → GREEN 29 tests; real call OK (L6) |
 | T3 | S1, S4, S5 | inline | pending | — |
 | T4 | S1-S5 | inline + independent verifier (Risk item 4: audio callback thread + producer thread) | pending | — |
 
@@ -35,3 +35,6 @@ Route evidence: no Writer trigger (units are sequential: T2/T3 depend on T1's `S
 - L1 (2026-10-23, user): "mira. necesito que hagamos algo, quiero crear una app que se pueda ejecutar desde la terminal PERO la idea es que tenga una TUI interactiva, quiero que te fijes como hacemos la musica para los videos de youtube y copies esa idea PERO que genere musica en tiempo real, tu le dices como quieres que sea el sentimiento, concepto,etc y eso hace un play next pausa y listo, se genera en tiempo real"
 - L2 (2026-10-23, user answers): stack "Python + Textual (Recomendado)"; interpretation "utilizara gentle shell por detras con el modelo que elija la persona ;)".
 - L3 (evidence): `gentle-shell -- -p --no-session -nt -ne -ns -np -nc --no-mcp --no-themes --no-skill-registry --thinking off '<prompt>'` returned clean JSON in ~8.5 s; `gentle-shell -- --list-models` prints a `provider model ...` table.
+- L4 (evidence): `-ne` drops extension providers (`claude-bridge`), so `--model claude-bridge/...` fails with `Model ... not found`. The bridge keeps extensions on and disables tools/skills/prompts/context/MCP instead; claude-bridge haiku answers in ~6 s, openai-codex gpt-6-luna in ~8.5 s.
+- L5 (T1): engine renders ~50x faster than real time, RMS about -12/-14 dBFS, peak < 0.8. Tests were written after the port, so RED was not observed for T1.
+- L6 (T2): real run, mood "una tormenta de verano en el campo, nostálgica pero con esperanza" → "Verano tras la tormenta", G mixolydian, 78 bpm, 1-4-6-5, rhodes/nylon, soft drums, 9.2 s.
