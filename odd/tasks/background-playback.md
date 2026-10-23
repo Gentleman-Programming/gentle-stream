@@ -18,13 +18,14 @@ Branch: `feat/realtime-music-tui`. Delivery: local work-unit commits, pushed to 
 
 | ID | Specs | Route | Status | Evidence |
 |----|-------|-------|--------|----------|
-| P1 | S1-S6 | delegated (context backstop) + independent verifier (Risk item 4: IPC, process lifecycle) | implemented; verifier pending | RED (ImportError client; 7 failed + 5 errors) → GREEN 73 passed x2; pty smoke with real audio: b keeps playing, ctl status/next/pause/play/stop as specified |
+| P1 | S1-S6 | delegated (context backstop) + independent verifier (Risk item 4: IPC, process lifecycle) | done | RED (ImportError client; 7 failed + 5 errors) → GREEN 73 passed x2; pty smoke with real audio: b keeps playing, ctl status/next/pause/play/stop as specified |
 | P2 | S7 | delegated (gentle-pi writer, scope extended) | done locally | gentle-pi 6e8aca60c on feat/gentle-music; 16 tests; typecheck clean; real-terminal check pending |
 
 ## Log
 
 - L1 (2026-10-23, user): "no puede /gentle:music directamente ejecutar en un widget full screen gentle-stream? y listo" → v1 proposal accepted with "si" (music stops on exit).
 - L2 (2026-10-23, user): "necesitamos si o si un seguir sonando"
+- L6 (P1 independent verifier): S1-S6 pass, no blockers; 403 passed x2; single instance under 5-9 concurrent starts; SIGKILL stale cleanup; 0700/0600; 21 malformed requests incl. pickle rejected; exact ctl outputs; audio-error line exact. Parent proved tests do not reach the real runtime dir (sentinel daemon under a temp HOME survived the full suite); the user's own player stopped cleanly at 00:05 (consistent with q). Advisories (not fixed): concurrent start without an audio device makes the loser wait 30 s; a silent peer blocks accept during the auth handshake; set_volume NaN accepted; ≤0.5 s attach window during stop; handle() catches only KeyError/TypeError/ValueError.
 - L5 (2026-10-23, user): "una cosa mas que te pido...  afplay ~/work/gentle-stream/out/genre-dubstep-samples.wav que ocupe mejor la pantalla hay mucho hueco" → reproduced at 160x45 (spectrum fixed at 5 rows, empty band below); spectrum now 1fr (min 5 rows), RED → GREEN test.
 - L4: incident: commit 497bc7f (pushed) captured the P1 writer's half-done __init__.py, so public main failed to start (`from .client import ...`). Hotfix 147330f restored the entry point; root cause: parent staged a file inside a running writer's surface.
 - L3: decisions by the parent (super-yolo mode, no question asked): `q` keeps stopping the music (standalone behavior unchanged), new `b` key detaches; `ctl` subcommand; Pi stops the music on session shutdown to avoid orphan audio.
