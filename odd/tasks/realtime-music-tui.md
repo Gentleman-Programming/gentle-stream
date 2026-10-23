@@ -20,8 +20,8 @@ Branch: `feat/realtime-music-tui` (new standalone repo, no remote). Delivery: `e
 |----|-------|-------|--------|----------|
 | T1 | S2 | inline | done | `56ddb3b`; 20 tests green (no RED: port written before tests, see L5) |
 | T2 | S3, S5 | inline | done | `b23e274`; RED (module missing) → GREEN 29 tests; real call OK (L6) |
-| T3 | S1, S4, S5 | inline | pending | — |
-| T4 | S1-S5 | inline + independent verifier (Risk item 4: audio callback thread + producer thread) | pending | — |
+| T3 | S1, S4, S5 | inline (writer delegation refused, L7) | done | `f7ca69f`; player RED→GREEN, next-gap RED (10 underruns)→GREEN; 52 tests green x3 |
+| T4 | S1-S5 | inline + independent verifier (Risk item 4) | done except independent verifier (unavailable, L8) | README/entry in `f7ca69f`; real-device smoke 0 underruns; TUI pty smoke exit 0 |
 
 - T1: project scaffold (uv) + streaming synthesis engine: `Style` parameters, bar-by-bar renderer with stateful effects (filters, room, wow, vinyl) so consecutive chunks are seamless; tests.
 - T2: Gentle Shell bridge: prompt → JSON → validated `Style`; model listing; tests with a fake `gentle-shell` binary.
@@ -37,4 +37,6 @@ Route evidence: no Writer trigger (units are sequential: T2/T3 depend on T1's `S
 - L3 (evidence): `gentle-shell -- -p --no-session -nt -ne -ns -np -nc --no-mcp --no-themes --no-skill-registry --thinking off '<prompt>'` returned clean JSON in ~8.5 s; `gentle-shell -- --list-models` prints a `provider model ...` table.
 - L4 (evidence): `-ne` drops extension providers (`claude-bridge`), so `--model claude-bridge/...` fails with `Model ... not found`. The bridge keeps extensions on and disables tools/skills/prompts/context/MCP instead; claude-bridge haiku answers in ~6 s, openai-codex gpt-6-luna in ~8.5 s.
 - L5 (T1): engine renders ~50x faster than real time, RMS about -12/-14 dBFS, peak < 0.8. Tests were written after the port, so RED was not observed for T1.
+- L7 (T3): parent context reached the ~150k backstop; delegating the app writer failed twice with "Writer session Git authority changed before admission." (the session started when this dir belonged to the `~/work` repo; `git init` here changed it). Continued inline.
+- L8 (T4): independent `gentle-ai-verify` failed: "could not register launched worktree: Session Git identity changed; cannot register a worktree." Parent-run (not independent) stress probe in a mktemp dir: 4 threads hammering next/set_style/toggle/volume + 1 puller for 15 s → 347 pieces, 0 errors, 0 invalid blocks, no deadlock, `_buffered` always equal to queued samples, close() immediate. Real device: 2x next + style change, 0 underruns. Fixed during T3: start() waits for the first bar; next() renders the new piece's first bar synchronously and crossfades 80 ms over the old pending audio (previously 2 real underruns).
 - L6 (T2): real run, mood "una tormenta de verano en el campo, nostálgica pero con esperanza" → "Verano tras la tormenta", G mixolydian, 78 bpm, 1-4-6-5, rhodes/nylon, soft drums, 9.2 s.
