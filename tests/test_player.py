@@ -294,3 +294,76 @@ def test_switching_while_closing_never_leaves_a_stream_open(switchable):
     p.close()
     t.join(5)
     assert not any(s.active for s in streams)
+
+
+def test_a_switch_after_the_stream_was_lost_opens_the_new_device(switchable):
+    p, streams = switchable
+    real = FakeStream.start
+
+    def start(self):
+        if self.kw.get("device") == 9:
+            raise OSError("cannot start")          # the new device fails to start...
+        real(self)
+
+    factory = p._factory
+
+    def gone(device=None, **kw):
+        if device is None:
+            raise OSError("Device unavailable")    # ...and the old one was unplugged meanwhile
+        return factory(device=device, **kw)
+
+    FakeStream.start, p._factory = start, gone
+    try:
+        with pytest.raises(OSError, match="cannot start"):
+            p.set_device(9)
+    finally:
+        FakeStream.start = real
+    assert not any(s.active for s in streams)      # silent now: the error was raised, not swallowed
+    p.set_device(2)
+    assert streams[-1].kw["device"] == 2 and streams[-1].active and p.device == 2
+    assert np.max(np.abs(pull_seconds(streams[-1], 0.3))) > 0.01
+
+
+def test_concurrent_switches_keep_one_stream_and_exact_audio():
+    lock, state = threading.Lock(), {"active": 0, "max": 0}
+    pulled, rendered = [], []
+
+    class Threaded(FakeStream):
+        def start(self):
+            with lock:
+                state["active"] += 1
+                state["max"] = max(state["max"], state["active"])
+            self.active, self._halt = True, threading.Event()
+
+            def run():
+                while not self._halt.is_set():
+                    self.pull()
+                    time.sleep(0.005)
+
+            self._t = threading.Thread(target=run, daemon=True)
+            self._t.start()
+
+        def stop(self):
+            if self.active:
+                self._halt.set()
+                self._t.join()
+                self.active = False
+                with lock:
+                    state["active"] -= 1
+
+    streams = []
+    p = Player(Engine(Style(name="First"), seed=1), stream_factory=lambda **kw: streams.append(Threaded(**kw))
+               or streams[-1], prebuffer=0.5)
+    pull, render = p._pull, p.engine.render_bar
+    p._pull = lambda n: pulled.append(pull(n)) or pulled[-1]
+    p.engine.render_bar = lambda: rendered.append(render()) or rendered[-1]
+    p.start()
+    ts = [threading.Thread(target=lambda: [p.set_device(i % 3) for i in range(40)]) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(10)
+    p.close()
+    out = np.concatenate(pulled)
+    assert state["max"] == 1 and not any(s.active for s in streams)
+    assert p.underruns == 0 and np.array_equal(out, np.concatenate(rendered)[:len(out)])

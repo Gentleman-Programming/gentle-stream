@@ -116,21 +116,31 @@ class Player:
         The new stream is opened first: if that fails, the error is raised and the old one keeps playing. Then the
         old one stops and the new one starts on the same queue; if it cannot start, the old device is reopened
         and the error raised. Before start() (or after close()) the device is only remembered for the next start.
+        If the old device cannot come back either, the player is silent until a later switch opens a device.
         """
         with self._stream_lock:
-            if self._stream is None or self._stopping.is_set():
+            if self._producer.ident is None or self._stopping.is_set():
                 self.device = device
                 return
             new = self._open(device)
             old, self._stream = self._stream, None
-            old.stop()     # returns once its callback has finished: never two callbacks at a time
-            old.close()
+            if old is not None:   # None: a previous switch lost both devices
+                old.stop()     # returns once its callback has finished: never two callbacks at a time
+                old.close()
             try:
                 new.start()
-            except Exception:
+            except Exception as e:
                 new.close()
-                self._stream = self._open(self.device)
-                self._stream.start()
+                try:
+                    back = self._open(self.device)
+                except Exception:
+                    raise e from None   # the old device is gone too: report why the switch failed
+                try:
+                    back.start()
+                except Exception:
+                    back.close()
+                    raise e from None
+                self._stream = back
                 raise
             self._stream, self.device = new, device
 
