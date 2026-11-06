@@ -34,7 +34,7 @@ def _seamless(bars) -> None:
 # ---------------------------------------------------------------- registry
 def test_registry_reserves_every_genre_in_its_own_module():
     assert genres.NAMES == ("lofi", "ambient", "chiptune", "synthwave", "jazz", "rock", "electro", "electrohouse", "cumbia",
-                            "dubstep")
+                            "dubstep", "orchestral")
     for name in genres.NAMES:
         g = genres.get(name)
         assert isinstance(g, Genre) and g.name == name

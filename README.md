@@ -9,7 +9,7 @@
 
 <p>
 <img src="https://img.shields.io/badge/Python-3.13-F095C8?style=for-the-badge&labelColor=1A1218" alt="Python 3.13">
-<img src="https://img.shields.io/badge/genres-10-F095C8?style=for-the-badge&labelColor=1A1218" alt="10 genres">
+<img src="https://img.shields.io/badge/genres-11-F095C8?style=for-the-badge&labelColor=1A1218" alt="11 genres">
 <img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Platform: macOS · Linux">
 <a href="LICENSE"><img src="https://img.shields.io/badge/MIT-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="License: MIT"></a>
 </p>
@@ -51,9 +51,9 @@ A composer plans every piece with a **song form** (intro → A → B → A' → 
 
 ---
 
-### Six genres — Lo-fi by default
+### Eleven genres — Lo-fi by default
 
-Lo-fi, ambient, chiptune, synthwave, jazz, rock/metal, electro, electro house, cumbia and dubstep. The model picks the genre from your mood, or you name it (*"jazz for a rainy night"*). Each genre has its own voices, rhythmic treatment, drum patterns and master chain, and they all share the same composer. See [Genres](#genres).
+Lo-fi, ambient, chiptune, synthwave, jazz, rock/metal, electro, electro house, cumbia, dubstep and orchestral. The model picks the genre from your mood, or you name it (*"jazz for a rainy night"*). Each genre has its own voices, rhythmic treatment, drum patterns and master chain, and they all share the same composer. See [Genres](#genres).
 
 ---
 
@@ -285,6 +285,7 @@ The genre is part of the style: it shows on the details line, survives `n` and i
 | `electrohouse` | Four-on-the-floor kick, clap on 2 and 4, off-beat open hats, dirty distorted bass riffs, sidechain-pumped supersaws, risers and snare rolls into drops | 124–132 bpm | Electronic kit, Saw Lead, Polysynth; the dirty bass stays synthesized |
 | `cumbia` | Guacharaca "ch-chik", tambora and congas, root-fifth bass with pickups, off-beat keyboards, accordion lead (digital-cumbia synth when bright) | 85–110 bpm | Guiro, congas, maracas, cabasa, timbales, Finger Bass, Accordion, Tango Accordion, Drawbar Organ |
 | `dubstep` | 140 bpm half-time drums, deep sine sub, LFO wobble bass synced to 1/4–1/16 and triplets, growls, risers and drops | 136–140 bpm | Power and Standard kit drums; sub, wobble, growl and risers stay synthesized |
+| `orchestral` | Cinematic, epic trailer sound: spiccato string ostinatos, sustained strings, trombones and tuba on the roots, a heroic horn melody (trumpet, violins or choir), timpani on downbeats and rolls with a cymbal swell into every section, big drums; the breakdown thins to a few strings, B' is the full tutti; plain triads, large clean hall | 66–132 bpm | Strings, Slow Strings, Violin, Viola, Cello, French Horn, Trumpet, Trombone, Tuba, Brass Section, Harp, Timpani, Choir Aahs, Orchestra kit; the cymbal swell stays synthesized |
 
 `rock` covers metal too: with busy drums at energy 0.7 or more it switches to 16th-note chugs and gallops, double kick and china accents.
 

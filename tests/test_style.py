@@ -50,7 +50,8 @@ def test_genre_defaults_to_lofi():
 def test_from_dict_accepts_every_registered_genre():
     from gentle_stream.genres import NAMES
     assert NAMES[0] == "lofi" and set(NAMES) == {"lofi", "ambient", "chiptune", "synthwave", "jazz", "rock", "electro",
-                                                 "electrohouse", "cumbia", "dubstep"}
+                                                 "electrohouse", "cumbia", "dubstep",
+                                                 "orchestral"}
     for name in NAMES:
         assert Style.from_dict({"genre": f" {name.upper()} "}).genre == name
 

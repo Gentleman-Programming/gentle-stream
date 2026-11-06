@@ -13,7 +13,7 @@ Branch: `feat/recorded-instruments` (shared tree, disjoint edit surface; parent 
 
 | ID | Specs | Route | Status | Evidence |
 |----|-------|-------|--------|----------|
-| T1 | S1-S3 | delegated writer (context backstop at ~158k parent tokens; parallel with recorded-instruments T1) | verified with one blocker B1 fixed in 218a73b; B1 recheck pending | RED per file (imports, 5+8+5 failures) → GREEN; `uv run pytest -q` 479 passed |
+| T1 | S1-S3 | delegated writer (context backstop at ~158k parent tokens; parallel with recorded-instruments T1) | done: verified; B1 fixed in 218a73b and rechecked (mw5f5zl5-8-t1k6: 50 passed, repro fixed, probes clean) | RED per file (imports, 5+8+5 failures) → GREEN; `uv run pytest -q` 479 passed |
 
 ## Log
 
