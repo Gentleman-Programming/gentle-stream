@@ -3,7 +3,9 @@
 The composer decides WHAT plays in every bar; the engine decides how it sounds. From a style, a seed and the tonic
 it plans the piece one form cycle at a time (the stream is endless, so the form loops with fresh variation) and
 answers `plan(bar)` with a `BarPlan`: section, energy, chord (and an optional passing chord on beats 3-4), key
-lift, active layers and the notes of the lead, the counter-melody and the bass. It is pure and deterministic per
+lift, active layers and the notes of the lead, the counter-melody and the bass. A moment (`moments`) passes a finite
+`form` of `Section`s instead: each plays once with its own energies, harmony and cues, then the piece ends (cue
+"end"). It is pure and deterministic per
 seed: it owns its random generator and never touches the audio one. A genre may reshape the diatonic chords
 through `chord_hook` (see `genres.base.Genre.chord`); everything else is shared by every genre.
 """
@@ -29,6 +31,8 @@ LIFT_CHANCE = 0.5
 CADENCES = {"minor": (4, 5), "major": (4, 5), "dorian": (4, 5), "phrygian": (7, 2), "lydian": (5, 2),
             "mixolydian": (4, 7)}
 RAISED = ("minor", "dorian")   # these borrow the major dominant (raised leading tone) at cadences
+# BarPlan.cue values of a finite form; the endless stream never sets one
+CUES = ("", "roll", "hit", "gap", "stinger", "end")
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,23 @@ class BarPlan:
     melody: tuple[Note, ...]   # the planned lead line (played when "lead" is in layers)
     counter: tuple[Note, ...]
     bass: tuple[Note, ...]
+    cue: str = ""   # finite forms only: "roll" into a hit, "hit", "gap" before a reveal, "stinger", "end" (past it)
+
+
+@dataclass(frozen=True)
+class Section:
+    """One section of a finite form. `name` is a form name the genres know (intro, A, B, A', breakdown, B',
+    release). `harmony`: "build" (the style's progression, ending on the dominant), "climax" (from the tonic, ending
+    on the dominant), "tension" (tonic pedal under a suspension, VI, iv and V, ending on the leading-tone diminished
+    seventh), "tonic" (the tonic triad) or "reveal" (the tonic triad with a major third)."""
+    name: str
+    bars: int
+    energy: tuple[float, float]   # energy of the first and the last bar, ramped linearly
+    harmony: str = "build"
+    drums: bool = True
+    melody: bool = False
+    first: str = ""               # cue of the first bar ("hit", "stinger")
+    last: str = ""                # cue of the last bar ("roll", "gap")
 
 
 # ---------------------------------------------------------------- motif transformations
@@ -101,13 +122,18 @@ class _Bar:
     counter: tuple = ()
     lead: bool = False
     approach: float = 0.0   # random draw that picks the bass approach note
+    drums: bool | None = None   # finite forms: the section's choice (None: by section name)
+    cue: str = ""
+    hold: str = ""              # finite forms: "pedal" (tonic) or "root" held for the whole bar
 
 
 class Composer:
     def __init__(self, style: Style, seed: int, ton: int,
-                 chord_hook: Callable[[Chord, tuple[int, ...]], Chord] | None = None):
+                 chord_hook: Callable[[Chord, tuple[int, ...]], Chord] | None = None,
+                 form: tuple[Section, ...] | None = None):
         self.style, self.ton = style, ton
         self.chord_hook = chord_hook
+        self.form = form
         self.rng = np.random.default_rng([seed, 0xC0])
         self.scale_iv = MODES[style.mode]
         self.ninth = {d: bool(self.rng.random() < 0.55) for d in range(1, 8)}
@@ -120,17 +146,20 @@ class Composer:
     # ------------------------------------------------------------ public
     def plan(self, bar: int) -> BarPlan:
         while len(self._bars) < bar + 2:
-            self._plan_cycle()
+            self._plan_cycle() if self.form is None else self._plan_form()
         b, nxt = self._bars[bar], self._bars[bar + 1]
+        if b.cue == "end":
+            return BarPlan(bar, b.section, b.section_bar, 0.0, b.chord, None, 0, frozenset(), (), (), (), "end")
         layers = {"chords", "bass"}
-        if self.style.drums != "none" and b.section not in ("intro", "breakdown"):
+        drums = b.section not in ("intro", "breakdown") if b.drums is None else b.drums
+        if self.style.drums != "none" and drums:
             layers.add("drums")
         if b.lead:
             layers.add("lead")
         if b.counter:
             layers.add("counter")
         return BarPlan(bar, b.section, b.section_bar, b.energy, b.chord, b.passing, b.key_offset,
-                       frozenset(layers), b.melody, b.counter, self._bass(bar, b, nxt))
+                       frozenset(layers), b.melody, b.counter, self._bass(bar, b, nxt), b.cue)
 
     # ------------------------------------------------------------ harmony
     def _chord(self, degree: int, raised: bool = False) -> Chord:
@@ -146,6 +175,13 @@ class Composer:
             tones.append(deg(8))
         chord = Chord(degree, tuple(tones))
         return self.chord_hook(chord, sc) if self.chord_hook else chord
+
+    def _hooked(self, chord: Chord) -> Chord:
+        return self.chord_hook(chord, self.scale_iv) if self.chord_hook else chord
+
+    def _triad(self, major: bool = False) -> Chord:
+        """The tonic triad doubled at the octave (a major third when `major`)."""
+        return self._hooked(Chord(1, (0, 4 if major else self.scale_iv[2], 7, 12)))
 
     @staticmethod
     def _dominant7(root: int) -> Chord:
@@ -184,7 +220,50 @@ class Composer:
             chords[-1] = self._chord(dom, raised)
         return chords, passing
 
+    def _form_harmony(self, sec: Section) -> list[Chord]:
+        n, kind = sec.bars, sec.harmony
+        dom = self._chord(CADENCES[self.style.mode][1], self.style.mode in RAISED)
+        if kind == "tension":
+            cycle = (self._hooked(Chord(1, (0, 5, 7, 12))), self._chord(6), self._chord(4), dom)
+            chords = [cycle[i % 4] for i in range(n)]
+            chords[-1] = self._hooked(Chord(7, (11, 14, 17, 20)))
+            return chords
+        if kind in ("tonic", "reveal"):
+            return [self._triad(kind == "reveal")] * n
+        chords = [self._chord(d) for d in self._degrees(self.style.progression, n)]
+        if kind == "climax":
+            chords[0] = self._chord(1)
+        if n > 1 or kind == "build":
+            chords[-1] = dom
+        if n > 2:
+            chords[-2] = self._chord(CADENCES[self.style.mode][0])
+        return chords
+
     # ------------------------------------------------------------ form
+    def _plan_form(self) -> None:
+        """A finite form: every section once, then "end" bars (the piece rings out, nothing new plays)."""
+        if self._bars:
+            last = self._bars[-1]
+            self._bars.append(_Bar("end", last.section_bar + 1, 0.0, last.chord, cue="end", drums=False))
+            return
+        for sec in self.form:
+            chords, (lo, hi), n = self._form_harmony(sec), sec.energy, sec.bars
+            start = len(self._bars)
+            for i in range(n):
+                cue = sec.first if i == 0 and sec.first else sec.last if i == n - 1 else ""
+                hold = "pedal" if sec.harmony == "tension" else "root" if sec.harmony in ("tonic", "reveal") else ""
+                self._bars.append(_Bar(sec.name, i, lo + (hi - lo) * (i / (n - 1) if n > 1 else 1.0), chords[i],
+                                       approach=float(self.rng.random()), drums=sec.drums, cue=cue, hold=hold))
+            if sec.melody and self.style.lead != "none":
+                name = sec.name if sec.name in DEVELOPMENT else "A"
+                pos = 0
+                while n - pos >= 4:
+                    k = 8 if n - pos >= 8 else 4
+                    self._melody(start + pos, name, k, 0)
+                    pos += k
+                if max(lo, hi) >= COUNTER_ENERGY:
+                    self._counter(start, n, 0)
+
     def _plan_cycle(self) -> None:
         form = FIRST_FORM if self.cycle == 0 else FORM
         if self.cycle > 0:
@@ -324,6 +403,8 @@ class Composer:
 
     def _bass(self, i: int, b: _Bar, nxt: _Bar) -> tuple[Note, ...]:
         """Root on beat 1, the passing chord's root or a fifth on the back half, an approach into the next root."""
+        if b.hold:   # finite forms: a tonic pedal or the final root, held for the whole bar
+            return (Note(0, self._bass_midi(Chord(1, (0,)) if b.hold == "pedal" else b.chord, 0), 4),)
         root = self._bass_midi(b.chord, b.key_offset)
         target = self._bass_midi(nxt.chord, nxt.key_offset)
         moves = target % 12 != root % 12

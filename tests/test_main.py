@@ -184,3 +184,104 @@ def test_an_unknown_device_flag_is_a_clean_error_and_starts_nothing(runtime, cap
                                        "(run gentle-stream devices to list them)\n")
     with pytest.raises(client.NoPlayer):
         client.connect()
+
+
+# ------------------------------------------------------------ moments
+@pytest.fixture
+def procedural(tmp_path, monkeypatch):
+    """An empty cache (procedural instruments) and the current directory in tmp_path."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_help_lists_the_moment_command(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    assert "moment" in out and "epic" in out and "suspense" in out
+    with pytest.raises(SystemExit) as exit_info:
+        main(["moment", "--help"])
+    out = capsys.readouterr().out
+    assert exit_info.value.code == 0
+    for text in ("epic", "suspense", "--duration SECONDS", "--genre NAME", "--mood TEXT", "--seed N", "-o FILE",
+                 "5-300", "orchestral", "<kind>-<seed>.wav"):
+        assert text in out
+
+
+def test_moment_writes_the_wav_and_reports_it(procedural, capsys):
+    from scipy.io import wavfile
+
+    assert main(["moment", "epic", "--duration", "6", "--seed", "3"]) == 0
+    path = procedural / "epic-3.wav"
+    sr, data = wavfile.read(path)
+    assert data.shape == (6 * sr, 2) and data.dtype.name == "int16"
+    out = capsys.readouterr().out
+    assert out.startswith(f"wrote {path} · 6 s · orchestral · seed 3 · procedural · ")
+    assert "bpm" in out and "hit at" in out
+
+
+def test_moment_honours_output_genre_and_seed(procedural, capsys):
+    from scipy.io import wavfile
+
+    out = procedural / "reveal.wav"
+    assert main(["moment", "suspense", "--duration", "7.5", "--genre", "synthwave", "--seed", "11",
+                 "-o", str(out)]) == 0
+    sr, data = wavfile.read(out)
+    assert len(data) == int(7.5 * sr)
+    assert "· 7.5 s · synthwave · seed 11 ·" in capsys.readouterr().out
+
+
+def test_moment_without_a_seed_picks_one_and_names_the_file_after_it(procedural, capsys):
+    assert main(["moment", "suspense", "--duration", "5"]) == 0
+    out = capsys.readouterr().out
+    seed = int(out.split("· seed ")[1].split(" ")[0])
+    assert (procedural / f"suspense-{seed}.wav").exists()
+
+
+@pytest.mark.parametrize("args, message", [
+    (["moment", "intro"], "invalid choice: 'intro'"),
+    (["moment", "epic", "--duration", "4"], "duration must be between 5 and 300 seconds"),
+    (["moment", "epic", "--duration", "301"], "duration must be between 5 and 300 seconds"),
+    (["moment", "epic", "--duration", "soon"], "duration must be between 5 and 300 seconds"),
+    (["moment", "epic", "--duration", "nan"], "duration must be between 5 and 300 seconds"),
+    (["moment", "epic", "--genre", "polka"], "unknown genre 'polka'"),
+])
+def test_moment_rejects_bad_arguments(procedural, capsys, args, message):
+    with pytest.raises(SystemExit) as exit_info:
+        main(args)
+    assert exit_info.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not list(procedural.glob("*.wav"))
+
+
+def test_moment_interprets_the_mood_like_the_tui_then_forces_the_genre(procedural, monkeypatch, capsys):
+    from gentle_stream import moments
+    from gentle_stream.bridge import GentleShell
+    from gentle_stream.style import Style
+
+    seen = []
+
+    def interpret(self, mood, current):
+        seen.append((self.binary, self.model, mood, current))
+        return Style.from_dict({"genre": "jazz", "mode": "dorian", "bpm": 118, "mood": mood}, current)
+
+    monkeypatch.setattr(GentleShell, "interpret", interpret)
+    assert main(["--gentle-shell", "/opt/gs", "--model", "p/m", "moment", "epic", "--duration", "6", "--seed", "2",
+                 "--mood", "a rocket launch", "--genre", "rock"]) == 0
+    assert seen == [("/opt/gs", "p/m", "a rocket launch", moments.default_style("epic"))]
+    assert "· rock · seed 2 ·" in capsys.readouterr().out
+    assert main(["moment", "epic", "--duration", "6", "--seed", "2", "--mood", "a rocket launch"]) == 0
+    assert "· jazz · seed 2 ·" in capsys.readouterr().out          # without --genre the model's genre stays
+
+
+def test_moment_reports_a_failed_interpretation(procedural, monkeypatch, capsys):
+    from gentle_stream.bridge import GentleShell, InterpretError
+
+    def interpret(self, mood, current):
+        raise InterpretError("gentle-shell not found")
+
+    monkeypatch.setattr(GentleShell, "interpret", interpret)
+    assert main(["moment", "epic", "--mood", "launch"]) == 1
+    assert capsys.readouterr().err == "gentle-stream: cannot interpret the mood: gentle-shell not found\n"
+    assert not list(procedural.glob("*.wav"))

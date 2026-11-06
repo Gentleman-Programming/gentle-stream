@@ -11,6 +11,10 @@ instruments of `recorded` in front of FluidR3_GM when they are installed too), i
 treatment and drum patterns, and its master-chain settings (convolution reverb, room, vinyl, tape wow, tone, bus
 compressor from `mastering`, final tape saturation). Style changes and "next" requests are queued from any thread
 and applied at the next bar boundary.
+
+A moment (`moments`) passes a finite `form`: the bars carry cues the engine turns into the genre's `roll`, `impact`
+and `stinger` hooks, and once the form is over ("end") nothing new is scheduled: the last chord and the reverb ring
+out. Without a form the stream is exactly the endless one.
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ import numpy as np
 from . import genres
 from . import recorded as _recorded
 from . import samples as _samples
-from .composer import Composer
+from .composer import Composer, Section
 from .genres.base import Piece
 from .genres.lofi import Instruments  # noqa: F401  (re-exported: the procedural lo-fi voices)
 from .mastering import Compressor, ConvolutionReverb, procedural_ir, soft_clip
@@ -44,10 +48,11 @@ class Engine:
     HEADROOM = 24.0  # seconds of scheduling buffer: longest bar plus the longest note tail
 
     def __init__(self, style: Style = DEFAULT, seed: int | None = None, sr: int = SR,
-                 samples: bool | str | Path = True):
+                 samples: bool | str | Path = True, form: tuple[Section, ...] | None = None):
         """`samples`: True uses the installed soundfont when FluidSynth is available, a path uses that soundfont,
         False keeps the procedural instruments. Anything unavailable falls back to procedural. Over the soundfont,
-        the installed recorded library plays the programs and drums it covers (recorded -> FluidR3_GM -> procedural)."""
+        the installed recorded library plays the programs and drums it covers (recorded -> FluidR3_GM -> procedural).
+        `form`: a finite form for the first piece (a moment); None plays the endless form."""
         self.sr = sr
         sf2 = _samples.soundfont_path() if samples is True else (Path(samples) if samples else None)
         renderer = _samples.load_renderer(sf2, sr) if sf2 is not None else None
@@ -75,7 +80,7 @@ class Engine:
         self._reverb: ConvolutionReverb | None = None
         self._comp = Compressor(sr)
         self._last: dict[str, float] = {}   # master gains of the previous bar (see `_glide`)
-        self._start_piece(style)
+        self._start_piece(style, form)
 
     # ------------------------------------------------------------ control (any thread)
     def queue_style(self, style: Style) -> None:
@@ -98,7 +103,7 @@ class Engine:
         return 240.0 / self.style.bpm
 
     # ------------------------------------------------------------ piece setup
-    def _start_piece(self, style: Style) -> None:
+    def _start_piece(self, style: Style, form: tuple[Section, ...] | None = None) -> None:
         self.style = style
         self.genre = genres.get(style.genre)
         self.seed = int(self._root_rng.integers(2 ** 31))
@@ -108,7 +113,7 @@ class Engine:
         self.bar = 0
         ton = 48 + KEYS.index(style.key)
         self.ton = ton - 12 if ton > 54 else ton
-        self.composer = Composer(style, self.seed, self.ton, self.genre.chord)
+        self.composer = Composer(style, self.seed, self.ton, self.genre.chord, form)
         self.section = self.composer.plan(0).section
         self._piece = Piece(style, self.rng, self.inst, self.ton, self.sr, self._acc)
         self.genre.start(self._piece)
@@ -136,7 +141,13 @@ class Engine:
     def _schedule_bar(self) -> None:
         p = self.composer.plan(self.bar)
         self.section = p.section
-        self.genre.schedule(self._piece, p)
+        if p.cue == "end":   # a finished moment: the last chord and the reverb ring out
+            return
+        (self.genre.stinger if p.cue == "stinger" else self.genre.schedule)(self._piece, p)
+        if p.cue == "roll":
+            self.genre.roll(self._piece, p)
+        elif p.cue in ("hit", "stinger"):
+            self.genre.impact(self._piece, p)
 
     def _glide(self, name: str, value: float, n: int, span: int) -> np.ndarray | float:
         """`value`, or an (n, 1) ramp to it over the first `span` samples when it changed since the last bar."""

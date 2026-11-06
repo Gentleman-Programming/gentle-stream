@@ -311,6 +311,50 @@ class OrchestralGenre(Genre):
                 add(ins.note("timpani", tr, B / 4, 0.45 + 0.55 * i / 7), (2 + i / 4) * B, 0.15, g)
             add(ins.swell(2 * B), 2 * B, -0.25, g)
 
+    # ------------------------------------------------------------ moments
+    @staticmethod
+    def _root(piece, chord, lo):
+        return (piece.ton + chord.tones[0] - lo) % 12 + lo
+
+    def roll(self, piece, p):
+        """Into the hit: a timpani roll on the dominant growing over the whole bar, a snare roll from beat 2 and a
+        cymbal swell."""
+        ins, add, B = piece.inst, piece.add, 60 / piece.style.bpm
+        g, tr = MIX * (0.4 + 0.6 * p.energy), self._root(piece, p.chord, 40)
+        for i in range(16):
+            add(ins.note("timpani", tr, B / 4, 0.35 + 0.65 * i / 15), i * B / 4, 0.15, g)
+        for i in range(12):
+            add(ins.hit("snare", 0.35 + 0.65 * i / 11), (1 + i / 4) * B, 0.2, g)
+        add(ins.swell(4 * B), 0.0, -0.25, 1.4 * g)
+
+    def impact(self, piece, p):
+        """The hit: big drum, taiko, cymbal and timpani on the root, over the default sub boom."""
+        super().impact(piece, p)
+        ins, add = piece.inst, piece.add
+        g = 1.4 * MIX * p.energy
+        add(ins.hit("boom", 1.0), 0.0, 0.0, g)
+        add(ins.hit("taiko", 1.0), 0.0, -0.2, g)
+        add(ins.hit("cymbal", 1.0), 0.0, 0.3, g)
+        add(ins.note("timpani", self._root(piece, p.chord, 40), 0.5, 1.0), 0.0, 0.15, g)
+
+    def stinger(self, piece, p):
+        """The final chord: the whole orchestra holds the tonic for a bar and a half and rings out in the hall."""
+        s, ins, add = piece.style, piece.inst, piece.add
+        B = 60 / s.bpm; dur = 6 * B; lvl = MIX * (0.3 + 0.7 * p.energy)
+        vc = piece.voice(list(p.chord.tones)); piece.center = float(np.mean(vc))
+        for i, m in enumerate(vc):
+            pan = (i - (len(vc) - 1) / 2) * 0.35
+            add(ins.note("strings", m, dur, 0.9), i * 0.01, pan, lvl)
+            add(ins.note("violins", m + 12, dur, 0.8), 0.01, -pan, 0.6 * lvl)
+            add(ins.note("brass" if s.chords != "pad" else "choir", m, dur, 0.85), 0.02, -pan, 0.8 * lvl)
+        add(ins.note(LEADS[s.lead] if s.lead != "none" else "horn", vc[-1], dur, 0.9), 0.0, 0.1, lvl)
+        r = self._root(piece, p.chord, 40)
+        add(ins.note("trombone", r, dur, 0.85), 0.0, -0.2, lvl)
+        add(ins.note("trombone", r + 7, dur, 0.85), 0.01, 0.2, 0.9 * lvl)
+        add(ins.note("tuba", self._root(piece, p.chord, 33), dur, 0.85), 0.0, 0.0, lvl)
+        for n in p.bass:
+            add(ins.note("basses", n.midi, dur, 0.85), 0.0, 0.0, lvl)
+
     def master(self, s):
         return Master(space=min(1.0, 0.45 + 0.55 * s.space), reverb=0.14 + 0.22 * s.space, room=0.5 + 1.4 * s.space,
                       vinyl=0.0, wow=0.0, tone=int(5000 * 2 ** (1.5 * s.brightness)), drive=1.7, threshold=-20.0,

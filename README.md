@@ -179,6 +179,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `devices` | Subcommand: list the audio output devices |
 | `setup-samples` | Subcommand: download the FluidR3_GM soundfont once (see below) |
 | `ctl ACTION` | Subcommand: control the music playing in the background (see below) |
+| `moment KIND` | Subcommand: render an `epic` or `suspense` moment to a WAV file (see [Moments](#moments)) |
 
 <div align="right"><a href="#top">Back to top</a></div>
 
@@ -297,6 +298,36 @@ The four shared tone colours (`piano`, `rhodes`, `nylon`, `pad`) mean something 
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
 
+## Moments
+
+A moment is music for one occasion: a finite piece with an arc and an exact duration, rendered offline to a WAV file (no background player, no audio device). It works with every genre and both backends.
+
+```bash
+gentle-stream moment epic                                    # 30 s, orchestral, writes epic-<seed>.wav
+gentle-stream moment epic --duration 15 --genre synthwave -o launch.wav
+gentle-stream moment suspense --duration 20 --seed 7
+gentle-stream moment suspense --mood "a door creaks open in an empty house"
+```
+
+| Kind | Arc |
+| :--- | :--- |
+| `epic` | Announcement / trailer music: a build whose energy rises into a timpani and snare roll (a riser in other genres), the hit on a downbeat at about two thirds of the duration (tutti plus an impact), the climax, then a final stinger chord that rings out |
+| `suspense` | A reveal: sustained tension (tonic pedal, ostinato, suspensions and an unresolved diminished chord), a short near-silence, then the reveal (a bright tonic with a major third plus an impact) and its decay |
+
+| Option | Meaning |
+| :--- | :--- |
+| `--duration SECONDS` | 5–300, default 30. The file is exactly that long: the tempo is chosen inside the genre's range so the hit lands on a downbeat, and the last chord rings and fades to silence inside the duration |
+| `--genre NAME` | Any genre of the stream (default `orchestral`) |
+| `--mood TEXT` | Interpreted by Gentle Shell exactly like in the app (`--model` and `--gentle-shell` go before `moment`); `--genre` still wins. Without it the kind's own style is used: epic is minor, ~120 bpm and bright; suspense is minor, slow and dark |
+| `--seed N` | The same seed renders the same piece (default: random, printed) |
+| `-o FILE` | Output path (default `<kind>-<seed>.wav` in the current directory) |
+
+The WAV is 16-bit stereo at 44.1 kHz, peak-normalised to -1 dBFS. With the sampled instruments installed (`setup-samples`) they are used, otherwise the procedural voices. A moment is a finite form for the same composer and genres as the stream: each genre may override the `roll`, `impact` and `stinger` hooks of [`base.py`](src/gentle_stream/genres/base.py) (orchestral does), and the defaults work for all of them.
+
+<div align="right"><a href="#top">Back to top</a></div>
+
+<div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
 ## Sampled instruments
 
 Optional. Without them every instrument is synthesized and nothing is ever downloaded.
@@ -334,7 +365,7 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 
 | Path | What it holds |
 | :--- | :--- |
-| [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, `devices`, `ctl`, attaching to or starting the background player |
+| [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, `devices`, `ctl`, `moment`, attaching to or starting the background player |
 | [`src/gentle_stream/daemon.py`](src/gentle_stream/daemon.py) | The background player process: audio output, private socket, single instance |
 | [`src/gentle_stream/client.py`](src/gentle_stream/client.py) | Attach to, start and control the background player (same interface as the in-process player) |
 | [`src/gentle_stream/app.py`](src/gentle_stream/app.py) | Textual TUI, theme, spectrum, model picker, save and saved-prompt dialogs |
@@ -342,6 +373,7 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 | [`src/gentle_stream/style.py`](src/gentle_stream/style.py) | The musical parameters and their validation; `n` variations |
 | [`src/gentle_stream/composer.py`](src/gentle_stream/composer.py) | Song form, harmony, motif development, counter-melody, bass |
 | [`src/gentle_stream/engine.py`](src/gentle_stream/engine.py) | Bar-by-bar rendering and the master chain |
+| [`src/gentle_stream/moments.py`](src/gentle_stream/moments.py) | Moments: the arc of each kind, tempo fitting, offline rendering and WAV export |
 | [`src/gentle_stream/mastering.py`](src/gentle_stream/mastering.py) | Procedural impulse response, convolution reverb, bus compressor, soft clip |
 | [`src/gentle_stream/player.py`](src/gentle_stream/player.py) | Real-time playback, buffering, crossfades, spectrum |
 | [`src/gentle_stream/samples.py`](src/gentle_stream/samples.py) | Soundfont download and verification, FluidSynth rendering |

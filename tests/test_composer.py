@@ -187,3 +187,42 @@ def test_plans_are_deterministic_per_seed():
     assert plans(seed=11) != plans(seed=12)
     c = Composer(Style(), 11, TON)       # random access gives the same plan as sequential access
     assert c.plan(70) == plans(seed=11)[70]
+
+
+# ---------------------------------------------------------------- finite form (moments)
+def finite(form, style=Style(mode="minor"), seed=3):
+    from gentle_stream.composer import Section
+
+    c = Composer(style, seed, TON, form=tuple(Section(*s[:3], **(s[3] if len(s) > 3 else {})) for s in form))
+    return [c.plan(b) for b in range(sum(s[1] for s in form) + 2)]
+
+
+def test_a_finite_form_plays_its_sections_once_with_their_energies_and_cues_then_ends():
+    ps = finite([("A", 4, (0.3, 0.6), {"harmony": "build", "last": "roll"}),
+                 ("B'", 2, (1.0, 1.0), {"harmony": "climax", "first": "hit", "melody": True}),
+                 ("release", 1, (0.9, 0.9), {"harmony": "tonic", "first": "stinger", "drums": False})])
+    assert [p.section for p in ps] == ["A"] * 4 + ["B'"] * 2 + ["release", "end", "end"]
+    assert [round(p.energy, 2) for p in ps[:4]] == [0.3, 0.4, 0.5, 0.6]
+    assert [p.cue for p in ps] == ["", "", "", "roll", "hit", "", "stinger", "end", "end"]
+    assert "drums" in ps[4].layers and "drums" not in ps[6].layers and ps[7].layers == frozenset()
+    assert ps[3].chord.degree == 5 and 11 in ps[3].chord.tones      # the roll ends on the raised dominant
+    assert ps[4].chord.degree == 1 and ps[6].chord.degree == 1        # the hit and the final chord: the tonic
+    assert ps[6].bass == (ps[6].bass[0],) and ps[6].bass[0].length == 4   # the final root rings the bar
+
+
+def test_a_tension_section_holds_a_tonic_pedal_and_never_resolves():
+    ps = finite([("intro", 6, (0.2, 0.4), {"harmony": "tension", "last": "gap", "drums": False}),
+                 ("release", 1, (1.0, 1.0), {"harmony": "reveal", "first": "stinger", "drums": False})])
+    pedal = ps[0].bass[0].midi
+    assert pedal % 12 == TON % 12
+    assert all(p.bass == (ps[0].bass[0],) for p in ps[:6])              # one held tonic under every bar
+    assert any(5 in p.chord.tones and 3 not in p.chord.tones for p in ps[:6])   # a suspension
+    assert ps[5].cue == "gap" and set(ps[5].chord.tones) >= {11, 14, 17}   # leading-tone diminished seventh
+    assert ps[6].chord.tones[:3] == (0, 4, 7)                         # the reveal: tonic with a major third
+    assert "drums" not in ps[0].layers and "lead" not in ps[0].layers
+
+
+def test_a_finite_form_is_deterministic_per_seed():
+    form = [("A", 8, (0.3, 0.8), {"melody": True}), ("release", 1, (1.0, 1.0), {"harmony": "tonic"})]
+    assert finite(form, seed=4) == finite(form, seed=4)
+    assert any(p.melody for p in finite(form, Style(lead="piano", lead_density=1.0)))
