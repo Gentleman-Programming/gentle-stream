@@ -1,0 +1,13 @@
+{
+  "sources": {
+    "vsco2ce": {
+      "name": "Versilian Studios Chamber Orchestra 2 Community Edition (VSCO 2 CE)",
+      "url": "https://github.com/sgossner/VSCO-2-CE",
+      "license": "CC0-1.0",
+      "license_url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "ref": ""
+    }
+  },
+  "instruments": [],
+  "drums": []
+}

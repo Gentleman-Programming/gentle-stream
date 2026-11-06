@@ -15,6 +15,7 @@ import tarfile
 import tempfile
 import threading
 import urllib.request
+import zlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -85,6 +86,14 @@ def setup_samples(cache: Path | None = None, url: str | None = None, sha256: str
     finally:
         for p in temps:
             p.unlink(missing_ok=True)
+
+
+def setup_recorded(cache: Path | None = None, manifest: dict | None = None, fetch=None,
+                   progress: Callable[[int, int | None], None] | None = None) -> Path:
+    """Install the recorded CC0 / public-domain instruments of `recorded.json` (see `recorded.install`) into the
+    same cache as the soundfont; does nothing when they are already installed."""
+    from . import recorded
+    return recorded.install(cache_dir() if cache is None else Path(cache), manifest, fetch=fetch, progress=progress)
 
 
 def _temp(cache: Path, temps: list[Path]) -> Path:
@@ -293,9 +302,11 @@ class Hit:
 class SampleInstruments:
     """Same interface as `engine.Instruments`, voiced by FluidR3_GM (the sub bass stays a procedural sine).
 
-    Rendered notes are cached by (instrument, key, duration bucket, velocity bucket); each instrument is scaled
-    once so its level matches the procedural voice the engine's mix was balanced for. Genres play any other GM
-    program or drum through `play(Program(...), ...)` and `hit(Hit(...))`, cached the same way.
+    Rendered notes are cached by (instrument, key, duration bucket, velocity bucket, take); each instrument is
+    scaled once so its level matches the procedural voice the engine's mix was balanced for. Genres play any other GM
+    program or drum through `play(Program(...), ...)` and `hit(Hit(...))`, cached the same way. With a
+    `recorded.Layered` renderer, a recorded note with several takes picks one from its unbucketed velocity (or drum
+    gain), so the choice follows the seed and never the render history; otherwise the take is None.
     """
 
     # name: (bank, program, MIDI velocity range, release tail seconds)
@@ -324,14 +335,27 @@ class SampleInstruments:
             self._cache.move_to_end(key)
         return x
 
+    def _take(self, chan: int, bank: int, prog: int, key: int, vel: int, x: float) -> int | None:
+        """The recorded take for unbucketed velocity or gain `x`, or None when the note has a single take."""
+        takes = getattr(self.r, "takes", None)
+        n = takes(chan, bank, prog, key, vel) if takes else 0
+        return zlib.crc32(f"{x:.6f}".encode()) % n if n > 1 else None
+
+    def _note(self, chan: int, bank: int, prog: int, key: int, vel: int, hold: float, tail: float,
+              take: int | None) -> np.ndarray:
+        if take is None:
+            return self.r.note(chan, bank, prog, key, vel, hold, tail)
+        return self.r.note(chan, bank, prog, key, vel, hold, tail, take=take)
+
     def _tonal(self, name: str, m, dur: float, vel: float) -> np.ndarray:
         bank, prog, (v0, v1), tail = self.TONAL[name]
         d = max(1, round(dur / self.DUR_STEP)) * self.DUR_STEP
         vb = int(np.clip(round(vel * self.VEL_STEPS), 1, self.VEL_STEPS))
         key = int(round(m))
-        return self._cached((name, key, d, vb), lambda: _finish(
-            self.r.note(0, bank, prog, key, int(v0 + (v1 - v0) * vb / self.VEL_STEPS), d, tail), self.sr)
-            * self._scale[name])
+        mv = int(v0 + (v1 - v0) * vb / self.VEL_STEPS)
+        take = self._take(0, bank, prog, key, mv, vel)
+        return self._cached((name, key, d, vb, take), lambda: _finish(
+            self._note(0, bank, prog, key, mv, d, tail, take), self.sr) * self._scale[name])
 
     def play(self, p: Program, m, dur: float, vel: float = 1.0) -> np.ndarray:
         """MIDI note `m` on program `p`, held `dur` seconds (bucketed) at velocity `vel` (0-1, bucketed)."""
@@ -339,16 +363,19 @@ class SampleInstruments:
         d = max(1, round(dur / self.DUR_STEP)) * self.DUR_STEP
         vb = int(np.clip(round(vel * self.VEL_STEPS), 1, self.VEL_STEPS))
         key = int(np.clip(round(m), 0, 127))
-        return self._cached((p, key, d, vb), lambda: _finish(
-            self.r.note(0, p.bank, p.program, key, int(v0 + (v1 - v0) * vb / self.VEL_STEPS), d, p.tail), self.sr)
-            * _program_level(self.r, self.sr, p))
+        mv = int(v0 + (v1 - v0) * vb / self.VEL_STEPS)
+        take = self._take(0, p.bank, p.program, key, mv, vel)
+        return self._cached((p, key, d, vb, take), lambda: _finish(
+            self._note(0, p.bank, p.program, key, mv, d, p.tail, take), self.sr) * _program_level(self.r, self.sr, p))
 
     def hit(self, h: Hit, g: float = 1.0) -> np.ndarray:
         """Drum `h` at `g` times its velocity (rounded to 0.05)."""
-        g = round(g * 20) / 20
-        return self._cached((h, g), lambda: _finish(
-            self.r.note(Renderer.DRUMS, 128, h.kit, h.key, int(np.clip(h.velocity * g, 1, 127)), 0.05, h.seconds),
-            self.sr) * _hit_level(self.r, self.sr, h))
+        raw, g = g, round(g * 20) / 20
+        mv = int(np.clip(h.velocity * g, 1, 127))
+        take = self._take(Renderer.DRUMS, 128, h.kit, h.key, mv, raw)
+        return self._cached((h, g, take), lambda: _finish(
+            self._note(Renderer.DRUMS, 128, h.kit, h.key, mv, 0.05, h.seconds, take), self.sr)
+            * _hit_level(self.r, self.sr, h))
 
     def piano(self, m, dur, vel=1.0):
         return self._tonal("piano", m, dur, vel)
@@ -367,8 +394,9 @@ class SampleInstruments:
 
     def _drum(self, name: str, g: float = 1.0) -> np.ndarray:
         kit, key, vel, secs = self.DRUM[name]
-        return self._cached((name, g), lambda: _finish(
-            self.r.note(Renderer.DRUMS, 128, kit, key, int(vel * g), 0.05, secs), self.sr) * self._scale[name])
+        take = self._take(Renderer.DRUMS, 128, kit, key, int(vel * g), g)
+        return self._cached((name, g, take), lambda: _finish(
+            self._note(Renderer.DRUMS, 128, kit, key, int(vel * g), 0.05, secs, take), self.sr) * self._scale[name])
 
     def kick(self):
         return self._drum("kick")

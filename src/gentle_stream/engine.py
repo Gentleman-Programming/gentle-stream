@@ -6,7 +6,8 @@ bars join seamlessly and the stream can run forever.
 
 What plays in each bar (song form, harmony, melody, counter-melody, bass line) comes from `composer.Composer`; how
 it sounds comes from the style's genre (`genres`, lo-fi by default): its voices (procedural, or sampled once
-`gentle-stream setup-samples` has installed the FluidR3_GM soundfont, `samples.SampleInstruments`), its rhythmic
+`gentle-stream setup-samples` has installed the FluidR3_GM soundfont, `samples.SampleInstruments`, with the recorded
+instruments of `recorded` in front of FluidR3_GM when they are installed too), its rhythmic
 treatment and drum patterns, and its master-chain settings (convolution reverb, room, vinyl, tape wow, tone, bus
 compressor from `mastering`, final tape saturation). Style changes and "next" requests are queued from any thread
 and applied at the next bar boundary.
@@ -20,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from . import genres
+from . import recorded as _recorded
 from . import samples as _samples
 from .composer import Composer
 from .genres.base import Piece
@@ -44,10 +46,13 @@ class Engine:
     def __init__(self, style: Style = DEFAULT, seed: int | None = None, sr: int = SR,
                  samples: bool | str | Path = True):
         """`samples`: True uses the installed soundfont when FluidSynth is available, a path uses that soundfont,
-        False keeps the procedural instruments. Anything unavailable falls back to procedural."""
+        False keeps the procedural instruments. Anything unavailable falls back to procedural. Over the soundfont,
+        the installed recorded library plays the programs and drums it covers (recorded -> FluidR3_GM -> procedural)."""
         self.sr = sr
         sf2 = _samples.soundfont_path() if samples is True else (Path(samples) if samples else None)
         renderer = _samples.load_renderer(sf2, sr) if sf2 is not None else None
+        if renderer is not None and (library := _recorded.load_library(sr=sr)) is not None:
+            renderer = _recorded.Layered(renderer, library)
         self._sampled = _samples.SampleInstruments(renderer, np.random.default_rng(0), sr) if renderer else None
         self._lock = threading.Lock()
         self._pending_style: Style | None = None

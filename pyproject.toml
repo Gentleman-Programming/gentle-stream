@@ -39,6 +39,7 @@ gentle-stream = "gentle_stream:main"
 [project.optional-dependencies]
 samples = [
     "pyfluidsynth>=1.4.0",
+    "soundfile>=0.13.1",
 ]
 
 [build-system]
@@ -50,6 +51,7 @@ dev = [
     "pyfluidsynth>=1.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "soundfile>=0.13.1",
 ]
 
 [tool.pytest.ini_options]
