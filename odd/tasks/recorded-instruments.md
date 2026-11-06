@@ -24,7 +24,10 @@ Branch: `feat/recorded-instruments` (local, from `feat/realtime-music-tui`). Del
 | T2 recorded voices for all genres (takes by seed, fallback) | S1, S3, S4, S6 | inline | pending | |
 | T3 orchestral genre | S5, S6 | delegated writer (context backstop; parallel with T1b, disjoint surfaces) | done | RED 22 failed → GREEN 98 passed; `uv run pytest -q` 510 passed; samples 108x / procedural 55x real time, peak 0.87 |
 | T4 moments mode (epic announcement, suspense/reveal) + WAV export | S5, S6, S7 | delegated writer (context backstop; parallel with T1b, disjoint surfaces) | done | RED (ImportError, 3+12 failed) → GREEN; `uv run pytest -q` 598 passed; endless stream byte-identical (11 genres, sha256 vs HEAD copy) |
-| T5 new genres: boom bap, bossa nova, tango | S5 | tbd | pending | |
+| T5a genre `boombap` | S5, S6 | delegated writer, parallel (3 independent genre units, disjoint files) | in progress | |
+| T5b genre `bossanova` | S5, S6 | delegated writer, parallel | in progress | |
+| T5c genre `tango` | S5, S6 | delegated writer, parallel | in progress | |
+| T5d register the three genres, contract/style tests, README rows (shared files, parent) | S5, S6 | inline | pending | |
 
 ## Log
 
