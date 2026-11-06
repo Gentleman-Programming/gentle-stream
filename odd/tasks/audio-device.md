@@ -13,7 +13,7 @@ Branch: `feat/recorded-instruments` (shared tree, disjoint edit surface; parent 
 
 | ID | Specs | Route | Status | Evidence |
 |----|-------|-------|--------|----------|
-| T1 | S1-S3 | delegated writer (context backstop at ~158k parent tokens; parallel with recorded-instruments T1) | done, verifier pending (Risk item 4) | RED per file (imports, 5+8+5 failures) → GREEN; `uv run pytest -q` 479 passed |
+| T1 | S1-S3 | delegated writer (context backstop at ~158k parent tokens; parallel with recorded-instruments T1) | verified with one blocker B1 fixed in 218a73b; B1 recheck pending | RED per file (imports, 5+8+5 failures) → GREEN; `uv run pytest -q` 479 passed |
 
 ## Log
 
@@ -22,3 +22,4 @@ Branch: `feat/recorded-instruments` (shared tree, disjoint edit surface; parent 
 - L3 Design handed to the writer: new `audio_devices.py` (list output devices via sounddevice.query_devices with an injectable query, resolve NAME|INDEX case-insensitive exact then unique substring, remembered choice in `$XDG_CONFIG_HOME/gentle-stream/audio.json` like presets.py:34-36); Player gets `device` + `set_device` (open the new stream first, keep the old one if that fails, then stop/close the old and start the new, under a stream lock); daemon commands `devices` and `set_device`, state gains `device` and `device_missing`; PlayerClient mirrors them; CLI `gentle-stream devices` and `--device`; TUI key `o` opens an OptionList picker modelled on ModelPicker (app.py:95-142).
 - L4 Writer mw5efxr9-3-ezbo done. Remembered device matched by exact name only; --device validated before spawning the player; in-process Player does not persist. Residual risk: if reopening the previous device also fails, no stream remains and the error is raised.
 - L5 Slice: branch carries 12 unpushed commits of feat/realtime-music-tui plus this work (~4.9k lines since main); delivery stays exception-ok (local work-unit commits, push/PR are the user's call).
+- L6 Verifier mw5esuv5-5-7aoj on c6b7188: S1 met, S3 met (scratch 452 passed / 27 skipped), S2 unmet by B1 (switch failing on both devices left `_stream=None`; the next switch only remembered the device while the daemon answered ok). Concurrency probes clean (1 stream, 1 callback, exact audio). Fixed in 218a73b (started state from the producer thread, original error reported, verifier regression tests committed). Advisories not acted on: A1 PortAudio device list is frozen at daemon start (sounddevice init once) and --device sends an index resolved in the client; A2 a remembered but busy device stops the daemon instead of falling back; A3 open-new-first may fail on exclusive backends; A4 /tmp/gs-* dirs from the test fixture.
