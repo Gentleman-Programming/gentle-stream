@@ -160,6 +160,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `n` | Next piece with the same mood: new key, progression, melody and groove |
 | `/` | Describe a mood; `Enter` sends it, `Esc` leaves the input |
 | `m` | Choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
+| `o` | Choose the audio output device; the music moves to it without restarting (see [Output device](#output-device)) |
 | `s` | Save what is playing under a name; `Enter` saves (an existing name is replaced), `Esc` cancels |
 | `p` | Saved prompts: `Enter` applies one instantly, `d` or `Delete` removes it, `Esc` closes |
 | `+` / `-` | Volume up / down by 5% |
@@ -174,6 +175,8 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `--model provider/id` | Model Gentle Shell uses to interpret moods (default: Gentle Shell's default) |
 | `--mood TEXT` | Mood to interpret as soon as the app starts |
 | `--gentle-shell PATH` | `gentle-shell` executable to run (default: `gentle-shell`) |
+| `--device NAME\|INDEX` | Audio output device to play on, remembered for next time (see [Output device](#output-device)) |
+| `devices` | Subcommand: list the audio output devices |
 | `setup-samples` | Subcommand: download the FluidR3_GM soundfont once (see below) |
 | `ctl ACTION` | Subcommand: control the music playing in the background (see below) |
 
@@ -202,6 +205,33 @@ The player listens on a Unix socket in a private directory (`$XDG_RUNTIME_DIR/ge
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
 
+## Output device
+
+The music plays on the system default output until you choose another one. The choice is remembered.
+
+```bash
+gentle-stream devices                 # list the outputs: * system default, > chosen output
+gentle-stream --device "studio"       # play on it: an index, a full name, or part of exactly one name
+```
+
+```text
+    1  MacBook Pro Speakers *
+>   2  Studio Display Speakers
+    3  BlackHole 2ch
+* system default · > chosen output (remembered)
+```
+
+| | |
+| :--- | :--- |
+| **In the app** | `o` opens the device list; `Enter` switches, `Esc` cancels. The piece keeps playing on the new device |
+| **Remembered in** | `~/.config/gentle-stream/audio.json` (or `$XDG_CONFIG_HOME/gentle-stream/audio.json`), by device name |
+| **Device gone** | If the remembered device is not connected when the player starts, the music plays on the system default and the status line says so |
+| **Errors** | An unknown or ambiguous `--device` exits with `1` before anything starts; a device that cannot be opened is reported and the music stays on the current one |
+
+<div align="right"><a href="#top">Back to top</a></div>
+
+<div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
 ## Token usage
 
 After each interpretation the status line shows what that call used, and the model line keeps the session total:
@@ -214,7 +244,7 @@ model: claude-bridge/claude-haiku-5-5 · session: 35.4k tokens · $0.0015
 | Action | Calls a model? |
 | :--- | :--- |
 | Describing a mood (`/` or `--mood`) | **Yes** — the only thing that does |
-| Playback, `space`, `n`, volume | No |
+| Playback, `space`, `n`, volume, output device | No |
 | Saving (`s`) or applying (`p`) a prompt | No |
 | Failed or cancelled requests | Add nothing to the total |
 
@@ -303,7 +333,7 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 
 | Path | What it holds |
 | :--- | :--- |
-| [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, `ctl`, attaching to or starting the background player |
+| [`src/gentle_stream/__init__.py`](src/gentle_stream/__init__.py) | CLI: flags, `setup-samples`, `devices`, `ctl`, attaching to or starting the background player |
 | [`src/gentle_stream/daemon.py`](src/gentle_stream/daemon.py) | The background player process: audio output, private socket, single instance |
 | [`src/gentle_stream/client.py`](src/gentle_stream/client.py) | Attach to, start and control the background player (same interface as the in-process player) |
 | [`src/gentle_stream/app.py`](src/gentle_stream/app.py) | Textual TUI, theme, spectrum, model picker, save and saved-prompt dialogs |
@@ -316,6 +346,7 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 | [`src/gentle_stream/samples.py`](src/gentle_stream/samples.py) | Soundfont download and verification, FluidSynth rendering |
 | [`src/gentle_stream/synth.py`](src/gentle_stream/synth.py) | Shared oscillators, envelopes, filters, waveshaper |
 | [`src/gentle_stream/presets.py`](src/gentle_stream/presets.py) | Saved prompts storage |
+| [`src/gentle_stream/audio_devices.py`](src/gentle_stream/audio_devices.py) | Output device listing, `--device` matching and the remembered choice |
 | [`src/gentle_stream/genres/`](src/gentle_stream/genres/) | One module per genre plus the registry |
 | [`tests/`](tests/) | pytest suite, including TUI tests driven through Textual's test pilot with a fake audio stream |
 | [`odd/tasks/`](odd/tasks/) | Feature documents: specs, tasks and evidence for every change |

@@ -3,6 +3,9 @@
 The callback never synthesizes. It pulls from a short queue of rendered bars, applies a smoothed gain (so play,
 pause and volume never click) and records level/spectrum data for the TUI. "Now playing" follows the bar that is
 actually audible, not the one being rendered.
+
+The output device can change while playing: a new stream is opened on it before the old one stops, and both read the
+same queue, so the piece goes on where it was.
 """
 from __future__ import annotations
 
@@ -52,13 +55,16 @@ def _default_stream(**kw):
 
 class Player:
     def __init__(self, engine: Engine, stream_factory=_default_stream, prebuffer: float = 1.0,
-                 blocksize: int = 1024, volume: float = 0.8):
+                 blocksize: int = 1024, volume: float = 0.8, device=None):
         self.engine = engine
         self._factory = stream_factory
         self._prebuffer = int(prebuffer * engine.sr)
         self._blocksize = blocksize
         self._lock = threading.Lock()          # guards the chunk queue (held briefly by the callback)
         self._render_lock = threading.Lock()   # one bar render + enqueue at a time; next() waits for it
+        self._stream_lock = threading.Lock()   # one open/swap/close of the output stream at a time
+        self.device = device             # sounddevice device (index or name); None is the system default
+        self.device_missing: str | None = None   # the interface of the background player; never set here
         self._chunks: deque[_Chunk] = deque()
         self._offset = 0                 # read position inside the first chunk
         self._buffered = 0               # samples queued and not yet played
@@ -78,26 +84,55 @@ class Player:
         self.now = NowPlaying(engine.style, engine.piece, 0)
 
     # ------------------------------------------------------------ lifecycle
+    def _open(self, device):
+        return self._factory(samplerate=self.engine.sr, channels=2, dtype="float32", blocksize=self._blocksize,
+                             latency="high", device=device, callback=self._callback)
+
     def start(self) -> None:
         """Open the output stream and start rendering; calling it again is a no-op."""
-        if self._stream is not None:
-            return
-        self._stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
-                                     blocksize=self._blocksize, latency="high", callback=self._callback)
-        self._producer.start()
-        deadline = time.monotonic() + 5
-        while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.005)    # the first bar is ready before the device starts pulling
-        self._stream.start()
+        with self._stream_lock:
+            if self._stream is not None:
+                return
+            self._stream = self._open(self.device)
+            self._producer.start()
+            deadline = time.monotonic() + 5
+            while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.005)    # the first bar is ready before the device starts pulling
+            self._stream.start()
 
     def close(self) -> None:
         self._stopping.set()
         self._wake.set()
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
+        with self._stream_lock:
+            if self._stream is not None:
+                self._stream.stop()
+                self._stream.close()
         if self._producer.is_alive():
             self._producer.join(timeout=5)
+
+    def set_device(self, device) -> None:
+        """Play on `device` (None: the system default) from now on, without restarting the piece.
+
+        The new stream is opened first: if that fails, the error is raised and the old one keeps playing. Then the
+        old one stops and the new one starts on the same queue; if it cannot start, the old device is reopened
+        and the error raised. Before start() (or after close()) the device is only remembered for the next start.
+        """
+        with self._stream_lock:
+            if self._stream is None or self._stopping.is_set():
+                self.device = device
+                return
+            new = self._open(device)
+            old, self._stream = self._stream, None
+            old.stop()     # returns once its callback has finished: never two callbacks at a time
+            old.close()
+            try:
+                new.start()
+            except Exception:
+                new.close()
+                self._stream = self._open(self.device)
+                self._stream.start()
+                raise
+            self._stream, self.device = new, device
 
     # ------------------------------------------------------------ controls
     def play(self) -> None:
@@ -159,6 +194,12 @@ class Player:
     def detach(self) -> None:
         """Leave the music playing without this app; an in-process player cannot outlive it, so it closes."""
         self.close()
+
+    def devices(self) -> list:
+        """The audio output devices (`audio_devices.Device`)."""
+        from .audio_devices import output_devices
+
+        return output_devices()
 
     def spectrum(self, bands: int = 32) -> np.ndarray:
         """`spectrum_levels`, with columns that rise at once and fall gently between calls. Runs on the UI thread."""

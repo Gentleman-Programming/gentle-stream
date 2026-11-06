@@ -71,3 +71,52 @@ def test_setup_samples_reports_a_checksum_mismatch(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(samples, "DEB_SHA256", "0" * 64)
     assert main(["setup-samples"]) == 1
     assert "checksum" in capsys.readouterr().err.lower()
+
+
+# ------------------------------------------------------------ output device
+def test_help_explains_how_to_choose_the_output_device(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    for text in ("--device NAME|INDEX", "devices", "choose the audio output device", "audio.json"):
+        assert text in out
+
+
+def test_devices_lists_the_outputs_the_default_and_the_remembered_choice(tmp_path, monkeypatch, capsys):
+    from gentle_stream import audio_devices
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:fake_devices")
+    audio_devices.save_choice("Studio Display Speakers")
+    assert main(["devices"]) == 0
+    assert capsys.readouterr() == ("    1  MacBook Pro Speakers *\n"
+                                   ">   2  Studio Display Speakers\n"
+                                   "    3  BlackHole 2ch\n"
+                                   "* system default · > chosen output (remembered)\n", "")
+
+
+def test_devices_reports_when_the_devices_cannot_be_listed(monkeypatch, capsys):
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:no_devices")
+    assert main(["devices"]) == 1
+    assert capsys.readouterr() == ("", "gentle-stream: cannot list the audio devices: PortAudio library not found\n")
+
+
+def test_device_flag_switches_the_player_after_attaching(runtime, monkeypatch):
+    from gentle_stream import audio_devices
+    from gentle_stream.app import StreamApp
+
+    seen = []
+    monkeypatch.setattr(StreamApp, "run", lambda self: seen.append(self.player.device))
+    assert main(["--device", "2"]) == 0
+    assert seen == ["Studio Display Speakers"]
+    assert audio_devices.load_choice() == "Studio Display Speakers"
+
+
+def test_an_unknown_device_flag_is_a_clean_error_and_starts_nothing(runtime, capsys):
+    from gentle_stream import client
+
+    assert main(["--device", "nope"]) == 1
+    assert capsys.readouterr() == ("", "gentle-stream: no audio output device matches “nope” "
+                                       "(run gentle-stream devices to list them)\n")
+    with pytest.raises(client.NoPlayer):
+        client.connect()

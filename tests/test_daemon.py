@@ -25,13 +25,41 @@ from gentle_stream.style import Style
 REPO = str(Path(__file__).resolve().parents[1])
 
 
+FAKE_DEVICES = [
+    {"index": 0, "name": "MacBook Pro Microphone", "max_input_channels": 1, "max_output_channels": 0},
+    {"index": 1, "name": "MacBook Pro Speakers", "max_input_channels": 0, "max_output_channels": 2},
+    {"index": 2, "name": "Studio Display Speakers", "max_input_channels": 0, "max_output_channels": 2},
+    {"index": 3, "name": "BlackHole 2ch", "max_input_channels": 2, "max_output_channels": 2},
+]
+BROKEN_DEVICE = 3   # FakeAudio refuses to open it, like a device that is busy or was just unplugged
+
+
+def fake_devices(device=None, kind=None):
+    """sounddevice.query_devices stand-in: two speakers, a loopback device and a microphone (input only)."""
+    if kind == "output":
+        return FAKE_DEVICES[1]
+    return FAKE_DEVICES
+
+
+def no_devices(device=None, kind=None):
+    raise OSError("PortAudio library not found")
+
+
 class FakeAudio:
     """sounddevice.OutputStream stand-in for the daemon process: a thread pulls the callback 4x faster than real
-    time, so "now playing" advances like on a real device, only quicker."""
+    time, so "now playing" advances like on a real device, only quicker. Every stream it opens is logged (its
+    device, one line each) to $GENTLE_STREAM_FAKE_AUDIO_LOG."""
 
     SPEED = 4
 
-    def __init__(self, callback, samplerate, blocksize, **kw):
+    def __init__(self, callback, samplerate, blocksize, device=None, **kw):
+        if device == BROKEN_DEVICE:
+            import sounddevice as sd
+
+            raise sd.PortAudioError("Device unavailable")
+        if log := os.environ.get("GENTLE_STREAM_FAKE_AUDIO_LOG"):
+            with open(log, "a") as f:
+                f.write(f"{device}\n")
         self.callback, self.sr, self.blocksize = callback, samplerate, blocksize
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -88,6 +116,9 @@ def runtime(monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(root / "cache"))     # no soundfont: fast procedural instruments
     monkeypatch.setenv("PYTHONPATH", REPO)                          # the daemon imports FakeAudio from here
     monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:FakeAudio")
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:fake_devices")
+    monkeypatch.setenv("GENTLE_STREAM_FAKE_AUDIO_LOG", str(root / "audio.log"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "config"))     # the remembered device stays in here
     run = root / "gentle-stream"
     try:
         yield run
@@ -268,6 +299,113 @@ def test_a_stopped_player_makes_polling_fail_and_controls_harmless(runtime):
     with pytest.raises(ConnectionError):
         watcher.spectrum(8)
     watcher.close()                                 # quitting afterwards is harmless too
+
+
+# ------------------------------------------------------------ output device
+def opened_devices(run):
+    """The device of every stream the player opened, in order ("None" is the system default)."""
+    return (run.parent / "audio.log").read_text().split()
+
+
+def remembered(run):
+    return json.loads((run.parent / "config" / "gentle-stream" / "audio.json").read_text())["device"]
+
+
+def test_with_no_device_chosen_the_player_uses_the_system_default(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    assert (player.device, player.device_missing) == (None, None)
+    assert opened_devices(runtime) == ["None"]
+
+
+def test_the_player_lists_the_output_devices(runtime):
+    from gentle_stream import client
+    from gentle_stream.audio_devices import Device
+
+    assert client.ensure().devices() == [Device(1, "MacBook Pro Speakers", True),
+                                         Device(2, "Studio Display Speakers", False),
+                                         Device(3, "BlackHole 2ch", False)]
+
+
+def test_set_device_switches_live_and_is_remembered(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    piece = player.now.piece
+    player.set_device("studio")
+    assert player.device == "Studio Display Speakers" and player.playing
+    assert opened_devices(runtime) == ["None", "2"]
+    assert remembered(runtime) == "Studio Display Speakers"
+    bar = player.now.bar
+    wait_for(lambda: player.spectrum(8) is not None and player.now.bar > bar)    # the new stream plays
+    assert player.now.piece == piece                                            # the same piece goes on
+    player.set_device(None)
+    assert player.device is None and opened_devices(runtime)[-1] == "None"
+    assert remembered(runtime) is None
+
+
+def test_the_remembered_device_is_used_by_the_next_player(runtime):
+    from gentle_stream import client
+
+    client.ensure().set_device(1)
+    client.connect().close()
+    player = client.ensure()
+    assert (player.device, player.device_missing) == ("MacBook Pro Speakers", None)
+    assert opened_devices(runtime)[-1] == "1"
+
+
+def test_a_remembered_device_that_is_gone_falls_back_to_the_system_default(runtime):
+    from gentle_stream import client
+
+    config = runtime.parent / "config" / "gentle-stream"
+    config.mkdir(parents=True)
+    (config / "audio.json").write_text('{"device": "USB DAC"}')
+    player = client.ensure()
+    assert (player.device, player.device_missing) == (None, "USB DAC")
+    assert opened_devices(runtime) == ["None"]
+
+
+def test_an_unknown_device_is_refused_and_nothing_changes(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    with pytest.raises(client.PlayerError) as error:
+        player.set_device("nope")
+    assert str(error.value) == "no audio output device matches “nope” (run gentle-stream devices to list them)"
+    with pytest.raises(client.PlayerError, match="matches several audio output devices"):
+        player.set_device("speakers")
+    player.spectrum(8)
+    assert player.device is None and player.playing and opened_devices(runtime) == ["None"]
+    assert not (runtime.parent / "config" / "gentle-stream" / "audio.json").exists()
+
+
+def test_a_device_that_cannot_be_opened_keeps_the_music_on_the_old_one(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    player.set_device("studio")
+    with pytest.raises(client.PlayerError) as error:
+        player.set_device("blackhole")
+    assert str(error.value) == "cannot open the audio output: Device unavailable"
+    player.spectrum(8)
+    assert player.device == "Studio Display Speakers" and player.playing
+    assert remembered(runtime) == "Studio Display Speakers"
+    bar = player.now.bar
+    wait_for(lambda: player.spectrum(8) is not None and player.now.bar > bar)
+
+
+def test_ctl_actions_still_work_after_switching_the_device(runtime, capsys):
+    from gentle_stream import client
+
+    player = client.ensure()
+    player.set_device("studio")
+    assert run_ctl(capsys, "pause") == (0, "", "")
+    assert json.loads(run_ctl(capsys, "status")[1])["playing"] is False
+    assert run_ctl(capsys, "toggle") == (0, "", "")
+    assert run_ctl(capsys, "next") == (0, "", "")
+    assert json.loads(run_ctl(capsys, "status")[1])["playing"] is True
+    assert run_ctl(capsys, "stop") == (0, "", "")
 
 
 # ------------------------------------------------------------ ctl

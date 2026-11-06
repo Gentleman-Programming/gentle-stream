@@ -10,12 +10,18 @@ key kept in a 0600 file. Messages are JSON (never pickle), one request and one r
     {"cmd": "play" | "pause" | "toggle" | "next"}
     {"cmd": "set_volume", "volume": 0.5}
     {"cmd": "set_style", "style": {...Style.to_dict()...}}
+    {"cmd": "devices"}               -> {"ok": true, "devices": [{"index": 1, "name": "...", "default": true}], "state": ...}
+    {"cmd": "set_device", "device": "name" | index | null}   (null: the system default; remembered on success)
     {"cmd": "stop"}                  -> {"ok": true}, then the process exits and every connection sees EOF
     anything else                    -> {"ok": false, "error": "..."}
 
 A `flock` on `player.lock` (which holds the pid) keeps one player per user; the lock holder replaces a socket left
 by a crashed player. Startup is reported to the spawner as one JSON line on `--ready-fd`: `{"ready": true}`,
 `{"running": true}` (another player holds the lock) or `{"error": "...", "audio": bool}`.
+
+The state names the output `device` (None: the system default). The device chosen last is remembered
+(`audio_devices`) and used by the next player; when it is gone, that player plays on the system default and reports
+the remembered name as `device_missing`.
 """
 from __future__ import annotations
 
@@ -29,9 +35,11 @@ import signal
 import stat
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from multiprocessing.connection import Listener
 from pathlib import Path
+
+from . import audio_devices
 
 AUDIO_FACTORY_ENV = "GENTLE_STREAM_AUDIO_FACTORY"   # testing seam: "module:attr" replaces sounddevice.OutputStream
 MAX_BANDS = 512
@@ -60,6 +68,15 @@ class Paths:
     @property
     def log(self) -> Path:
         return self.dir / "player.log"
+
+
+@dataclass
+class Output:
+    """The output device the player uses, by name (None: the system default)."""
+
+    name: str | None = None
+    missing: str | None = None   # remembered but not found at startup, so the player uses the system default
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)   # one switch at a time
 
 
 def runtime_dir() -> Path:
@@ -105,8 +122,9 @@ def _stream_factory():
     return getattr(importlib.import_module(module), attr)
 
 
-def state(player, bands: int = 0) -> dict:
+def state(player, bands: int = 0, output: Output | None = None) -> dict:
     now = player.now
+    output = output or Output()
     out = {
         "pid": os.getpid(),
         "playing": bool(player.playing),
@@ -115,20 +133,46 @@ def state(player, bands: int = 0) -> dict:
         "backend": player.engine.backend,
         "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar},
         "style": player.style.to_dict(),
+        "device": output.name,
+        "device_missing": output.missing,
     }
     if bands > 0:
         out["spectrum"] = [round(float(v), 4) for v in player.spectrum_levels(min(bands, MAX_BANDS))]
     return out
 
 
-def handle(player, request) -> dict:
+def set_device(player, output: Output, choice) -> None:
+    """Switch the player to `choice` (name or index; None: the system default) and remember it."""
+    if choice is None:
+        device = None
+    elif isinstance(choice, (str, int)) and not isinstance(choice, bool):
+        device = audio_devices.resolve(choice, audio_devices.output_devices())
+    else:
+        raise TypeError("device must be a name, an index or null")
+    with output.lock:   # clients switching at once: the name shown always matches the stream that won
+        try:
+            player.set_device(None if device is None else device.index)
+        except Exception as e:   # busy, unplugged... the music keeps playing where it was
+            raise audio_devices.DeviceError(f"cannot open the audio output: {e}") from e
+        output.name, output.missing = (None if device is None else device.name), None
+        try:
+            audio_devices.save_choice(output.name)
+        except audio_devices.DeviceError as e:   # switched anyway; only the next player will not know
+            print(f"gentle-stream: {e}", file=sys.stderr)
+
+
+def handle(player, request, output: Output | None = None) -> dict:
     """Run one request against the player; bad requests get an error answer, never an exception."""
     from .style import Style
 
+    output = output if output is not None else Output()
     try:
         cmd = request["cmd"]
         if cmd == "state":
-            return {"ok": True, "state": state(player, int(request.get("bands", 0)))}
+            return {"ok": True, "state": state(player, int(request.get("bands", 0)), output)}
+        if cmd == "devices":
+            devices = [d.to_dict() for d in audio_devices.output_devices()]
+            return {"ok": True, "devices": devices, "state": state(player, 0, output)}
         if cmd in ("play", "pause", "toggle", "next"):
             getattr(player, cmd)()
         elif cmd == "set_volume":
@@ -137,18 +181,23 @@ def handle(player, request) -> dict:
             if not isinstance(request["style"], dict):
                 raise TypeError("style must be an object")
             player.set_style(Style.from_dict(request["style"]))
+        elif cmd == "set_device":
+            set_device(player, output, request["device"])
         elif cmd == "stop":
             return {"ok": True}
         else:
             raise ValueError(f"unknown command {cmd!r}")
+    except audio_devices.DeviceError as e:
+        return {"ok": False, "error": str(e)}
     except (KeyError, TypeError, ValueError) as e:
         return {"ok": False, "error": f"bad request: {e}"}
-    return {"ok": True, "state": state(player)}
+    return {"ok": True, "state": state(player, 0, output)}
 
 
 class Server:
-    def __init__(self, player, listener: Listener):
+    def __init__(self, player, listener: Listener, output: Output | None = None):
         self.player, self.listener = player, listener
+        self.output = output if output is not None else Output()
         self.stopping = threading.Event()
 
     def accept_forever(self) -> None:
@@ -170,7 +219,7 @@ class Server:
                     return
                 try:
                     request = json.loads(raw)
-                    answer = handle(self.player, request if isinstance(request, dict) else {})
+                    answer = handle(self.player, request if isinstance(request, dict) else {}, self.output)
                 except ValueError:
                     request, answer = {}, {"ok": False, "error": "bad request: not JSON"}
                 try:
@@ -220,9 +269,20 @@ def main(argv: list[str] | None = None) -> int:
     from .engine import Engine
     from .player import Player
 
+    output = Output()
+    device = None
+    if remembered := audio_devices.load_choice():
+        try:
+            found = audio_devices.find(remembered, audio_devices.output_devices())
+        except audio_devices.DeviceError:
+            found = None
+        if found is None:
+            output.missing = remembered
+        else:
+            device, output.name = found.index, found.name
     try:
         factory = _stream_factory()
-        player = Player(Engine(), **({"stream_factory": factory} if factory else {}))
+        player = Player(Engine(), device=device, **({"stream_factory": factory} if factory else {}))
     except Exception as e:
         report({"error": f"cannot start the player: {e}", "audio": False})
         return 1
@@ -242,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         report({"error": f"cannot listen on {paths.sock}: {e}", "audio": False})
         return 1
 
-    server = Server(player, listener)
+    server = Server(player, listener, output)
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: server.stopping.set())
     signal.signal(signal.SIGHUP, signal.SIG_IGN)

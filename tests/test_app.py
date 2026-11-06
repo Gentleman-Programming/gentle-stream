@@ -2,7 +2,7 @@ import threading
 
 import pytest
 
-from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
+from gentle_stream.app import DevicePicker, ModelPicker, PresetPicker, SaveDialog, StreamApp
 from gentle_stream.bridge import InterpretError, Usage
 from gentle_stream.engine import Engine
 from gentle_stream.player import Player
@@ -535,3 +535,67 @@ async def test_the_spectrum_fills_the_free_height_and_the_info_sits_by_the_input
         status, mood = app.query_one("#status"), app.query_one("#mood")
         gap = mood.region.y - (status.region.y + status.region.height)
         assert 0 <= gap <= 3                      # no empty band between the info and the input
+
+
+# ------------------------------------------------------------ output device
+def device_app(monkeypatch):
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:fake_devices")
+    opened = []
+
+    def factory(**kw):
+        opened.append(kw["device"])
+        return FakeStream(**kw)
+
+    player = Player(Engine(Style(name="Midnight Rain"), seed=1), stream_factory=factory, prebuffer=0.3)
+    return StreamApp(player, FakeShell()), player, opened
+
+
+@pytest.mark.asyncio
+async def test_o_picks_the_output_device_and_switches_to_it(monkeypatch):
+    app, player, opened = device_app(monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DevicePicker)
+        await pilot.press("down", "down", "enter")     # system default, MacBook Pro Speakers, Studio Display
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert opened == [None, 2] and player.device == 2
+        assert "Output: Studio Display Speakers" in text(app, "#status")
+        await pilot.press("o")
+        await pilot.pause(0.3)
+        assert "current: Studio Display Speakers" in str(app.screen.query_one("#devices-status").render())
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, DevicePicker) and opened == [None, 2]
+
+
+@pytest.mark.asyncio
+async def test_a_device_that_cannot_be_opened_is_reported_and_the_music_stays(monkeypatch):
+    app, player, opened = device_app(monkeypatch)
+    real = player._factory
+
+    def factory(**kw):
+        if kw["device"] == 3:
+            raise OSError("Device unavailable")
+        return real(**kw)
+
+    player._factory = factory
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause(0.3)
+        await pilot.press("down", "down", "down", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert "Could not switch the output" in text(app, "#status")
+        assert "Device unavailable" in text(app, "#status")
+        assert player.device is None and opened == [None] and player.playing
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_device_that_is_gone_is_reported_on_start(monkeypatch):
+    app, player, _ = device_app(monkeypatch)
+    player.device_missing = "USB DAC"
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        assert text(app, "#status") == "Output device “USB DAC” not found; playing on the system default."

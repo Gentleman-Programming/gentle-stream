@@ -5,7 +5,8 @@ The player is usually the background player (`client.PlayerClient`), so `b` leav
 
 The mood is interpreted by Gentle Shell in a thread worker while the music keeps playing; the new style starts at
 the next bar. Everything shown comes from `player.now`, i.e. the bar that is audible right now. What is audible can
-be saved under a name and applied later, instantly, without asking Gentle Shell again.
+be saved under a name and applied later, instantly, without asking Gentle Shell again. `o` moves the music to
+another audio output without restarting the piece.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 from .style import Style
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
+DEFAULT_DEVICE_LABEL = "System default"
 BLOCKS = " ▁▂▃▄▅▆▇█"
 
 # gentlemanprogramming.com palette
@@ -140,6 +142,64 @@ class ModelPicker(ModalScreen[str | None]):
 
     def action_dismiss_picker(self) -> None:
         self.dismiss(self.shell.model)
+
+
+class DevicePicker(ModalScreen[tuple[int | None, str] | None]):
+    """Choose the audio output: dismisses with (device index or None for the system default, label), or None."""
+
+    BINDINGS = [Binding("escape", "dismiss_picker", "Cancel")]
+    DEFAULT_CSS = """
+    DevicePicker { align: center middle; }
+    DevicePicker > Vertical { width: 60; height: auto; max-height: 80%; border: round $primary; padding: 0 1;
+                              background: $surface; }
+    DevicePicker .heading { color: $primary; text-style: bold; }
+    DevicePicker #devices-status { color: $text-muted; }
+    DevicePicker OptionList, DevicePicker OptionList:focus { height: auto; max-height: 20; border: none;
+                                                            background: $surface; }
+    """
+
+    def __init__(self, player: Player):
+        super().__init__()
+        self.player = player
+        self.labels = {"": DEFAULT_DEVICE_LABEL}
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Audio output", classes="heading")
+            yield Static("Loading devices…", id="devices-status")
+            yield OptionList(Option(DEFAULT_DEVICE_LABEL, id=""), id="devices")
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+        self._load()
+
+    @work(thread=True, exclusive=True)
+    def _load(self) -> None:
+        try:
+            devices = self.player.devices()
+        except Exception as e:   # PortAudio missing, or the background player went away
+            self.app.call_from_thread(self.query_one("#devices-status", Static).update,
+                                      f"Could not list devices: {escape(str(e))}")
+            return
+        self.app.call_from_thread(self._show, devices)
+
+    def _show(self, devices) -> None:
+        options = self.query_one(OptionList)
+        options.add_options([Option(Text(f"{d.name}{' (system default)' if d.default else ''}"), id=str(d.index))
+                             for d in devices])
+        self.labels.update({str(d.index): d.name for d in devices})
+        current = next((i for i, d in enumerate(devices, 1) if self.player.device in (d.index, d.name)), 0)
+        options.highlighted = current
+        label = escape(self.labels[options.get_option_at_index(current).id])
+        self.query_one("#devices-status", Static).update(f"{len(devices)} devices · current: {label}")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        choice = event.option.id
+        self.dismiss((int(choice) if choice else None, self.labels[choice]))
+
+    def action_dismiss_picker(self) -> None:
+        self.dismiss(None)
 
 
 class SaveDialog(ModalScreen[str | None]):
@@ -272,6 +332,7 @@ class StreamApp(App):
         Binding("n", "next", "Next"),
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
+        Binding("o", "pick_output", "Output"),
         Binding("s", "save_preset", "Save"),
         Binding("p", "pick_preset", "Saved"),
         Binding("plus,equals_sign", "volume(5)", "Vol +5"),
@@ -313,6 +374,9 @@ class StreamApp(App):
                                                                  "state", "model", "status")}
         self.player.start()
         self._show_model()
+        if self.player.device_missing:
+            self._status(f"Output device “{escape(self.player.device_missing)}” not found; "
+                         "playing on the system default.")
         self._tick()
         self.set_interval(1 / 15, self._tick)
         if self.initial_mood:
@@ -377,6 +441,23 @@ class StreamApp(App):
             self._show_model()
 
         self.push_screen(ModelPicker(self.shell), chosen)
+
+    def action_pick_output(self) -> None:
+        def chosen(choice: tuple[int | None, str] | None) -> None:
+            if choice is not None:
+                self._set_output(*choice)
+
+        self.push_screen(DevicePicker(self.player), chosen)
+
+    @work(thread=True, exclusive=True, group="output")
+    def _set_output(self, device: int | None, label: str) -> None:
+        """Opening a device can take a moment, so it happens off the UI thread; the music keeps playing."""
+        try:
+            self.player.set_device(device)
+        except Exception as e:   # unknown, busy or unplugged: the old output keeps playing
+            self.call_from_thread(self._status, f"[$error]Could not switch the output:[/] {escape(str(e))}")
+            return
+        self.call_from_thread(self._status, f"Output: [b]{escape(label)}[/b]")
 
     # ------------------------------------------------------------ saved prompts
     def action_save_preset(self) -> None:

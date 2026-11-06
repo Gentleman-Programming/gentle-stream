@@ -1,3 +1,4 @@
+import threading
 import time
 
 import numpy as np
@@ -206,3 +207,90 @@ def test_spectrum_bands_are_balanced_from_left_to_right():
     left, right = bands[:24].mean(), bands[24:].mean()
     assert abs(left - right) < 0.08, (left, right)    # pink noise is the reference for music: an even bar
     assert np.abs(np.diff(bands)).mean() < 0.05       # neighbouring columns are similar, no holes or spikes
+
+
+# ------------------------------------------------------------ output device
+@pytest.fixture
+def switchable():
+    """A started player whose factory records every stream and refuses the device "broken"."""
+    streams = []
+
+    def factory(device=None, **kw):
+        if device == "broken":
+            raise OSError("Device unavailable")
+        streams.append(FakeStream(device=device, **kw))
+        return streams[-1]
+
+    p = Player(Engine(Style(name="First"), seed=1), stream_factory=factory, prebuffer=0.5)
+    p.start()
+    wait_for(lambda: p.buffered_seconds >= 0.5)
+    yield p, streams
+    p.close()
+
+
+def test_with_no_device_chosen_the_stream_opens_on_the_system_default(player):
+    p, stream = player
+    assert p.device is None and stream.kw["device"] is None
+
+
+def test_a_device_chosen_before_start_is_the_one_opened():
+    streams = []
+    p = Player(Engine(Style(name="First"), seed=1), stream_factory=lambda **kw: streams.append(FakeStream(**kw))
+               or streams[-1], prebuffer=0.3, device=4)
+    p.set_device(5)                                # not started yet: only remembered
+    assert streams == []
+    p.start()
+    try:
+        assert len(streams) == 1 and streams[0].kw["device"] == 5 and p.device == 5
+    finally:
+        p.close()
+
+
+def test_set_device_moves_the_music_to_a_new_stream_without_restarting_the_piece(switchable):
+    p, streams = switchable
+    old = streams[0]
+    pull_seconds(old, 0.5)
+    now, position = p.now, p.position
+    p.set_device(2)
+    assert len(streams) == 2 and streams[1].kw["device"] == 2 and p.device == 2
+    assert streams[1].active and not old.active
+    assert p.buffered_seconds > 0                  # the queued audio was kept
+    x = pull_seconds(streams[1], 0.3)
+    assert np.max(np.abs(x)) > 0.01 and p.now.piece == now.piece and p.position > position
+    assert p.underruns == 0
+
+
+def test_a_device_that_cannot_be_opened_leaves_the_old_stream_playing(switchable):
+    p, streams = switchable
+    with pytest.raises(OSError, match="Device unavailable"):
+        p.set_device("broken")
+    assert len(streams) == 1 and streams[0].active and p.device is None
+    assert np.max(np.abs(pull_seconds(streams[0], 0.5))) > 0.01
+
+
+def test_a_new_stream_that_fails_to_start_brings_the_old_device_back(switchable):
+    p, streams = switchable
+    real = FakeStream.start
+
+    def start(self):
+        if self.kw.get("device") == 9:
+            raise OSError("cannot start")
+        real(self)
+
+    FakeStream.start = start
+    try:
+        with pytest.raises(OSError, match="cannot start"):
+            p.set_device(9)
+    finally:
+        FakeStream.start = real
+    assert p.device is None and streams[-1].kw["device"] is None and streams[-1].active
+    assert np.max(np.abs(pull_seconds(streams[-1], 0.3))) > 0.01
+
+
+def test_switching_while_closing_never_leaves_a_stream_open(switchable):
+    p, streams = switchable
+    t = threading.Thread(target=lambda: [p.set_device(i % 3) for i in range(20)])
+    t.start()
+    p.close()
+    t.join(5)
+    assert not any(s.active for s in streams)

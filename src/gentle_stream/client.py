@@ -1,7 +1,8 @@
 """Talk to the background player (`daemon.py`): attach to it, start it when needed, and control it.
 
 `PlayerClient` has the interface the TUI uses from an in-process `Player` (now, playing, volume, level, style,
-spectrum, play/pause/toggle/next, set_style, set_volume, start, close), so the app does not know which one it has.
+device, device_missing, spectrum, play/pause/toggle/next, set_style, set_volume, devices, set_device, start, close),
+so the app does not know which one it has.
 `close()` stops the music (the `q` key), `detach()` only hangs up (the `b` key).
 
 State is cached: `spectrum()` polls it (the TUI calls it on every frame) and every control refreshes it, so `now`,
@@ -22,6 +23,7 @@ from multiprocessing.connection import AuthenticationError, Client
 import numpy as np
 
 from . import daemon
+from .audio_devices import Device
 from .player import NowPlaying, settle
 from .style import Style
 
@@ -122,7 +124,11 @@ class PlayerClient:
 
     # ------------------------------------------------------------ transport
     def request(self, cmd: str, **args) -> dict | None:
-        """One round trip; raises PlayerGone when the player is no longer there."""
+        """One round trip, returning the player's state; raises PlayerGone when the player is no longer there."""
+        return self._call(cmd, **args).get("state")
+
+    def _call(self, cmd: str, **args) -> dict:
+        """One round trip, returning the whole answer."""
         with self._lock:
             if self._conn is None:
                 raise PlayerGone("the player stopped")
@@ -134,7 +140,7 @@ class PlayerClient:
                 raise PlayerGone("the player stopped") from e
         if not answer.get("ok"):
             raise PlayerError(answer.get("error", "the player refused the request"))
-        return answer.get("state")
+        return answer
 
     def _hang_up(self) -> None:
         if self._conn is not None:
@@ -148,6 +154,7 @@ class PlayerClient:
         self.backend = state["backend"]
         self.now = NowPlaying(Style.from_dict(now["style"]), now["piece"], now["bar"])
         self.style = Style.from_dict(state["style"])   # rendered, maybe not audible yet: the base for a mood
+        self.device, self.device_missing = state.get("device"), state.get("device_missing")
 
     def _control(self, cmd: str, **args) -> None:
         try:
@@ -186,6 +193,17 @@ class PlayerClient:
 
     def set_style(self, style: Style) -> None:
         self._control("set_style", style=style.to_dict())
+
+    def devices(self) -> list[Device]:
+        """The audio output devices, as the player sees them; raises PlayerError when they cannot be listed."""
+        answer = self._call("devices")
+        self._update(answer["state"])
+        return [Device(**d) for d in answer["devices"]]
+
+    def set_device(self, device: str | int | None) -> None:
+        """Play on another output (a name or index; None: the system default) and remember it. Raises PlayerError
+        when the device is unknown or cannot be opened; the music then keeps playing where it was."""
+        self._update(self.request("set_device", device=device))
 
     def detach(self) -> None:
         """Hang up and leave the music playing."""
