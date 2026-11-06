@@ -442,9 +442,16 @@ def reference_rms(sr: int = 44100) -> dict[str, float]:
 
 @lru_cache(maxsize=256)
 def _program_level(renderer: Renderer, sr: int, p: Program) -> float:
+    """Gain that gives `p`'s reference note (1 s at velocity 0.8) the RMS `p.rms`. The note is middle C, or the key
+    a recorded instrument names inside its range; when that is silent (a FluidR3_GM preset outside its range, like
+    the contrabass), the first key of C3, C2, C5 that sounds."""
     v0, v1 = p.velocity
-    ref = renderer.note(0, p.bank, p.program, 60, int(v0 + (v1 - v0) * 0.8), 1.0, p.tail)
-    return p.rms / _rms(_finish(ref, sr), sr)
+    first = getattr(renderer, "reference_key", lambda *a: 60)(0, p.bank, p.program)
+    for key in dict.fromkeys((first, 48, 36, 72)):
+        level = _rms(_finish(renderer.note(0, p.bank, p.program, key, int(v0 + (v1 - v0) * 0.8), 1.0, p.tail), sr), sr)
+        if level > 1e-5:
+            return p.rms / level
+    return p.rms / level
 
 
 @lru_cache(maxsize=256)

@@ -1,0 +1,26 @@
+// A tiny SFZ exercising what the manifest builder reads.
+#define $REL 0.4
+<control>
+default_path=Piano\Sus\
+
+<global>
+ampeg_release=$REL
+volume=-2
+
+<group> // pedal down: never used
+locc64=64 hicc64=127
+<region> sample=sus_C4.wav pitch_keycenter=60 lokey=59 hikey=61
+
+<group>
+lovel=0 hivel=63 seq_length=2
+<region> seq_position=1 sample=C4 soft rr1.wav pitch_keycenter=c4 lokey=b3 hikey=c#4 offset=120 tune=-12
+<region> seq_position=2 sample=C4 soft rr2.wav pitch_keycenter=c4 lokey=b3 hikey=c#4
+<region> seq_position=1 sample=E4, soft.wav key=64 volume=3.5
+
+<group>
+lovel=64 hivel=127
+<region> sample=C4 loud.wav pitch_keycenter=60 lokey=59 hikey=61 loop_mode=loop_continuous loop_start=100 loop_end=900
+<region> sample=../Rel/C4 rel.wav pitch_keycenter=60 lokey=59 hikey=61 trigger=release
+/* a block
+comment */
+#include "more.sfz"

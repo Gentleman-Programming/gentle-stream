@@ -110,6 +110,14 @@ def test_shipped_manifest_is_valid_and_only_lists_cc0_or_public_domain_sources()
     lambda m: m["instruments"][0].update(zones=[]),
     lambda m: m["sources"]["test"].update(ref=""),
     lambda m: m["drums"].append({**m["drums"][0], "name": "kick2"}),       # (kit, key) covered twice
+    lambda m: m["instruments"][0]["zones"][0].update(loop=[500, 100]),
+    lambda m: m["instruments"][0]["zones"][0].update(loop=[0]),
+    lambda m: m["instruments"][0]["zones"][0].update(offset=-1),
+    lambda m: m["instruments"][0]["zones"][0].update(tune=5000),
+    lambda m: m["instruments"][0]["zones"][0].update(volume="loud"),
+    lambda m: m["instruments"][0]["zones"][0].update(member=7),
+    lambda m: m["instruments"][0].update(sustain="yes"),
+    lambda m: m["drums"][0].update(sustain=True),                          # a one-shot never sustains
 ])
 def test_invalid_manifest_is_rejected_before_anything_is_downloaded(tmp_path, manifest, breakage):
     breakage(manifest)
@@ -176,7 +184,14 @@ def test_install_is_idempotent_and_reinstalls_only_when_the_manifest_changes(tmp
 
 def test_setup_recorded_uses_the_user_cache_and_the_shipped_manifest(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    root = samples.setup_recorded(fetch=lambda *a: pytest.fail("the shipped manifest lists no files yet"))
+    seen = []
+    monkeypatch.setattr(recorded, "install", lambda cache, manifest, **kw: seen.append((cache, manifest)) or cache)
+    samples.setup_recorded()
+    assert seen == [(tmp_path / "gentle-stream", None)]                        # None: the committed manifest
+    empty = {"sources": {}, "instruments": [], "drums": []}
+    monkeypatch.undo()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    root = samples.setup_recorded(manifest=empty, fetch=lambda *a: pytest.fail("nothing to download"))
     assert root == tmp_path / "gentle-stream" / "recorded" and (root / "index.json").is_file()
     assert recorded.load_library(sr=SR) is None                                # nothing covered: FluidR3 as today
 
@@ -302,3 +317,218 @@ def test_engine_with_a_library_that_covers_nothing_it_plays_renders_exactly_as_b
     e, with_lib = bars(sf2)
     assert isinstance(e._sampled.r, recorded.Layered)
     assert np.array_equal(with_lib, without)
+
+
+# ---------------------------------------------------------------- SFZ zone parameters
+def rms(x):
+    return float(np.sqrt(np.mean(np.square(x))))
+
+
+def one_zone(info, tail=0.0, **extra):
+    return {"sources": {k: dict(v) for k, v in SOURCES.items()},
+            "instruments": [{"name": "inst", "gm": [[0, 0]], "tail": tail, "zones": [{**zone(info), **extra}]}],
+            "drums": []}
+
+
+def render(tmp_path, m, key=60, vel=127, hold=1.0, sr=SR):
+    cache = tmp_path / f"cache{len(list(tmp_path.glob('cache*')))}"
+    recorded.install(cache, m)
+    return recorded.Layered(Fake(sr), recorded.load_library(cache, sr)).note(0, 0, 0, key, vel, hold, 0.0)
+
+
+def test_archive_members_are_extracted_and_each_archive_is_downloaded_once(tmp_path):
+    import io
+    import tarfile
+    import zipfile
+    up = tmp_path / "upstream"
+    up.mkdir()
+    wav = {}
+    for m in (60, 67):
+        buf = io.BytesIO()
+        soundfile.write(buf, tone(m), SR, format="WAV", subtype="PCM_16")
+        wav[m] = buf.getvalue()
+    zpath, tpath = up / "bank.zip", up / "bank.tar.xz"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.writestr("bank/samples/C4.wav", wav[60])
+        z.writestr("bank/samples/G4.wav", wav[67])
+    with tarfile.open(tpath, "w:xz") as t:
+        info = tarfile.TarInfo("./bank/G4.wav")
+        info.size = len(wav[67])
+        t.addfile(info, io.BytesIO(wav[67]))
+    sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+    arch = {"url": zpath.as_uri(), "sha256": sha(zpath), "source": "test"}
+    tar = {"url": tpath.as_uri(), "sha256": sha(tpath), "source": "test"}
+    m = {"sources": {k: dict(v) for k, v in SOURCES.items()}, "drums": [], "instruments": [
+        {"name": "zip", "gm": [[0, 0]], "tail": 0.0, "zones": [
+            {**zone(arch, root=60, hikey=63), "member": "bank/samples/C4.wav"},
+            {**zone(arch, root=67, lokey=64), "member": "bank/samples/G4.wav"}]},
+        {"name": "tar", "gm": [[0, 1]], "tail": 0.0, "zones": [{**zone(tar, root=67), "member": "bank/G4.wav"}]}]}
+    fetched = []
+
+    def fetch(url, sha256, work):
+        fetched.append(url)
+        return recorded._fetch(url, sha256, work)
+
+    root = recorded.install(tmp_path / "cache", m, fetch=fetch)
+    assert sorted(fetched) == sorted([arch["url"], tar["url"]])                # one download per archive
+    lay = recorded.Layered(Fake(), recorded.load_library(tmp_path / "cache", SR))
+    assert peak_hz(lay.note(0, 0, 0, 60, 100, 1.0, 0.0)) == pytest.approx(mtof(60), rel=0.01)
+    assert peak_hz(lay.note(0, 0, 0, 67, 100, 1.0, 0.0)) == pytest.approx(mtof(67), rel=0.01)
+    assert peak_hz(lay.note(0, 0, 1, 67, 100, 1.0, 0.0)) == pytest.approx(mtof(67), rel=0.01)
+    lines = (root / "SOURCES.txt").read_text()
+    assert "bank/samples/G4.wav" in lines and "bank/G4.wav" in lines
+
+
+def test_a_member_missing_from_the_archive_is_a_setup_error_and_leaves_nothing(tmp_path, files):
+    import zipfile
+    zpath = tmp_path / "upstream" / "bank.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.writestr("other.wav", b"x")
+    arch = {"url": zpath.as_uri(), "sha256": hashlib.sha256(zpath.read_bytes()).hexdigest(), "source": "test"}
+    with pytest.raises(samples.SetupError):
+        recorded.install(tmp_path / "cache", one_zone(arch, member="bank/C4.wav"))
+    assert not (tmp_path / "cache").exists()
+
+
+def test_offset_skips_the_start_of_the_recording(tmp_path):
+    lead = 0.8 * np.ones(int(0.25 * SR))                                       # a click/noise before the note
+    info = write(tmp_path / "offset.wav", np.concatenate([lead, tone(60, 1.0)]))
+    x = render(tmp_path, one_zone(info, offset=len(lead)), hold=0.5)
+    y = render(tmp_path, one_zone(info), hold=0.5)
+    plain = render(tmp_path, one_zone(write(tmp_path / "plain.wav", tone(60, 1.0))), hold=0.5)
+    assert np.min(y[:100]) > 0.7                                                # without the offset: the lead-in
+    assert np.allclose(x[:SR // 4], plain[:SR // 4], atol=2e-3)
+
+
+def test_volume_scales_the_zone_and_quiet_sources_keep_their_resolution(tmp_path):
+    quiet = write(tmp_path / "quiet.wav", tone(60, 1.0, amp=0.5 * 10 ** (-48 / 20)))
+    loud = write(tmp_path / "loud.wav", tone(60, 1.0))
+    a = render(tmp_path, one_zone(quiet, volume=48.0), hold=0.5)
+    b = render(tmp_path, one_zone(loud), hold=0.5)
+    assert rms(a) == pytest.approx(rms(b), rel=0.02)
+    assert np.max(np.abs(a - b)) < 0.01                                        # not 16-bit steps of -48 dB audio
+    c = render(tmp_path, one_zone(loud, volume=-6.0), hold=0.5)
+    assert rms(c) == pytest.approx(rms(b) * 10 ** (-6 / 20), rel=0.02)
+
+
+@pytest.mark.parametrize("tune", [100, -50])
+def test_tune_shifts_the_pitch_in_cents(tmp_path, tune):
+    x = render(tmp_path, one_zone(write(tmp_path / "t.wav", tone(60, 2.0)), tune=tune), hold=1.5)
+    assert peak_hz(x) == pytest.approx(mtof(60) * 2 ** (tune / 1200), rel=0.005)
+
+
+def test_a_looped_recording_sustains_a_note_held_longer_than_it(tmp_path):
+    t = np.arange(int(0.5 * SR)) / SR
+    x = 0.5 * np.sin(2 * np.pi * 260 * t) * np.minimum(1, t / 0.02)
+    info = write(tmp_path / "loop.wav", x)
+    loop = [int(0.1 * SR), int(0.4 * SR)]                                       # 78 whole cycles, as SFZ loops are
+    held = render(tmp_path, one_zone(info, tail=0.3, loop=loop), hold=2.0)
+    assert len(held) == int(2.3 * SR)
+    late = held[int(1.5 * SR):int(1.9 * SR)]
+    assert rms(late) == pytest.approx(rms(x[loop[0]:loop[1]]), rel=0.1)
+    assert np.max(np.abs(np.diff(held))) < 2 * np.max(np.abs(np.diff(x))) + 0.01   # no click at the loop seams
+    assert rms(held[-int(0.05 * SR):]) < 0.2 * rms(late)                      # the tail fades out
+    unlooped = render(tmp_path, one_zone(info, tail=0.3), hold=2.0)
+    assert len(unlooped) <= len(x) + 1                                          # without a loop: the recording's end
+
+
+def test_loop_points_follow_the_offset_and_the_sample_rate(tmp_path):
+    t = np.arange(int(0.5 * 48000)) / 48000
+    x = 0.5 * np.sin(2 * np.pi * mtof(60) * t)
+    info = write(tmp_path / "loop48.wav", np.concatenate([np.zeros(4800), x]), sr=48000)
+    held = render(tmp_path, one_zone(info, offset=4800, loop=[4800 + 4800, 4800 + 19200]), hold=1.5, sr=22050)
+    assert len(held) == int(1.5 * 22050)
+    assert peak_hz(held[22050 // 2:], 22050) == pytest.approx(mtof(60), rel=0.01)
+    assert rms(held[-11025:]) == pytest.approx(rms(x), rel=0.1)
+
+
+def bowed(seconds=2.4, steady=2.0):
+    """A recorded sustained note with no loop points: a 0.1 s attack, a steady part with a little noise, and the
+    player's release from `steady` seconds on."""
+    t = np.arange(int(seconds * SR)) / SR
+    env = np.minimum(1, t / 0.1) * np.where(t < steady, 1.0, np.exp(-(t - steady) / 0.08))
+    noise = np.random.default_rng(3).normal(0, 0.02, len(t))
+    return 0.5 * env * (np.sin(2 * np.pi * mtof(60) * t) + noise)
+
+
+def sustained_instrument(info, sustain=True):
+    m = one_zone(info, tail=0.3)
+    if sustain:
+        m["instruments"][0]["sustain"] = True
+    return m
+
+
+def test_a_sustained_instrument_without_loop_points_holds_its_steady_part_as_long_as_the_note(tmp_path):
+    x = bowed()
+    info = write(tmp_path / "bowed.wav", x)
+    steady = rms(x[int(0.5 * SR):int(1.9 * SR)])
+    held = render(tmp_path, sustained_instrument(info), hold=6.0)
+    assert len(held) == int(6.3 * SR)
+    for a in np.arange(1.0, 5.6, 0.5):                                         # no pumping and no early release
+        assert rms(held[int(a * SR):int((a + 0.4) * SR)]) == pytest.approx(steady, rel=0.15), a
+    assert np.max(np.abs(np.diff(held))) < 2 * np.max(np.abs(np.diff(x))) + 0.01   # no click at the seams
+    assert peak_hz(held[int(3 * SR):int(5 * SR)]) == pytest.approx(mtof(60), rel=0.01)
+    assert rms(held[-int(0.05 * SR):]) < 0.2 * steady                          # the tail still fades out
+    almost = render(tmp_path, sustained_instrument(info), hold=2.3)             # released just past the steady
+    assert rms(almost[int(2.05 * SR):int(2.25 * SR)]) == pytest.approx(steady, rel=0.15)   # part: still holding
+
+
+def test_without_sustain_a_recording_ends_where_it_ends_and_a_short_note_is_untouched(tmp_path):
+    x = bowed()
+    info = write(tmp_path / "bowed.wav", x)
+    plain = render(tmp_path, sustained_instrument(info, sustain=False), hold=6.0)
+    assert len(plain) <= len(x) + 1                                             # a piano or guitar decays
+    short = render(tmp_path, sustained_instrument(info), hold=1.0)
+    assert np.array_equal(short, render(tmp_path, sustained_instrument(info, sustain=False), hold=1.0))
+
+
+def test_a_recording_too_short_to_find_a_steady_part_is_played_as_recorded(tmp_path):
+    x = bowed(seconds=0.5, steady=0.3)
+    held = render(tmp_path, sustained_instrument(write(tmp_path / "short.wav", x)), hold=3.0)
+    assert len(held) <= len(x) + 1
+
+
+# ---------------------------------------------------------------- level reference key
+class Ranged(Fake):
+    """A FluidR3-like preset that is silent outside keys 28-55 (like FluidR3's contrabass at middle C)."""
+
+    def note(self, chan, bank, program, key, vel, hold, tail):
+        x = super().note(chan, bank, program, key, vel, hold, tail)
+        return x if 28 <= key <= 55 else np.zeros_like(x)
+
+
+def test_level_is_measured_inside_a_fluidr3_preset_that_is_silent_at_middle_c():
+    inst = samples.SampleInstruments(Ranged(), np.random.default_rng(0))
+    p = samples.Program(43, rms=0.2)
+    level = samples._program_level(inst.r, SR, p)
+    assert np.isfinite(level) and level < 100
+    assert samples._rms(inst.play(p, 40, 1.0, 0.8), SR) == pytest.approx(0.2, rel=0.25)
+
+
+def test_level_of_a_recorded_instrument_is_measured_inside_its_recorded_range(tmp_path):
+    low = write(tmp_path / "low.wav", tone(36, 2.0))
+    m = {"sources": {k: dict(v) for k, v in SOURCES.items()}, "drums": [], "instruments": [
+        {"name": "bass", "gm": [[0, 43]], "tail": 0.2, "zones": [zone(low, root=36, lokey=24, hikey=48)]}]}
+    recorded.install(tmp_path / "cache", m)
+    lay = recorded.Layered(Ranged(), recorded.load_library(tmp_path / "cache", SR))
+    assert 24 <= lay.reference_key(0, 0, 43) <= 48
+    assert lay.reference_key(0, 0, 0) == 60                                    # not recorded: FluidR3's middle C
+    inst = samples.SampleInstruments(lay, np.random.default_rng(0))
+    p = samples.Program(43, rms=0.2)
+    assert samples._rms(inst.play(p, lay.reference_key(0, 0, 43), 1.0, 0.8), SR) == pytest.approx(0.2, rel=0.1)
+
+
+def test_velocity_follows_the_sfz_default_curve_over_levelled_layers(tmp_path):
+    soft = write(tmp_path / "soft.wav", tone(60, 1.0, amp=0.4))                  # layers recorded (or levelled by
+    loud = write(tmp_path / "loud.wav", tone(60, 1.0, amp=0.4))                  # their SFZ volume) to one level
+    m = {"sources": {k: dict(v) for k, v in SOURCES.items()}, "drums": [
+        {"name": "hit", "gm": [["*", 38]], "zones": [zone(soft, root=38, hivel=63), zone(loud, root=38, lovel=64)]}],
+         "instruments": [{"name": "inst", "gm": [[0, 0]], "tail": 0.0,
+                          "zones": [zone(soft, hivel=63), zone(loud, lovel=64)]}]}
+    recorded.install(tmp_path / "cache", m)
+    lay = recorded.Layered(Fake(), recorded.load_library(tmp_path / "cache", SR))
+    for chan, prog, key in ((0, 0, 60), (9, 0, 38)):
+        level = {v: rms(lay.note(chan, 128 if chan == 9 else 0, prog, key, v, 0.5, 0.0)) for v in (32, 63, 64, 127)}
+        assert level[63] / level[127] == pytest.approx((63 / 127) ** 2, rel=0.02)   # no jump between layers
+        assert level[64] / level[63] == pytest.approx((64 / 63) ** 2, rel=0.02)
+        assert level[32] / level[63] == pytest.approx((32 / 63) ** 2, rel=0.02)

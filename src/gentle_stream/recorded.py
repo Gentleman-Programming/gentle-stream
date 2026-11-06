@@ -3,9 +3,13 @@
 The committed manifest (`recorded.json`) lists every file of the library: its URL and pinned SHA-256, the source it
 comes from (name, licence and pinned ref in `sources`), and how it maps to General MIDI (instrument programs as
 `[bank, program]`, drums as `[kit, key]` with kit `"*"` for any kit) with its root key, key and velocity range and
-take. `gentle-stream setup-samples` downloads the files once (`install`), verifies them, converts them to mono
-44.1 kHz 16-bit WAV under `<cache>/recorded/`, writes `SOURCES.txt` (provenance and licence per file) and finally
-`index.json`, whose presence marks a complete install. Nothing is ever committed or shipped.
+take, and optionally what the source's SFZ says about it: `member` (the file inside a zip or tar archive at `url`),
+`offset` (frames skipped at the start), `volume` (dB), `tune` (cents) and `loop` (`[start, end]` frames of the
+source file, repeated while a note is held). An instrument marked `sustain` (organs, strings, winds: notes the
+player holds) loops the steady part of recordings without loop points, so a long note never ends early.
+`gentle-stream setup-samples` downloads each file once (`install`), verifies it, converts it to mono 44.1 kHz 16-bit
+WAV normalised to full scale under `<cache>/recorded/`, writes `SOURCES.txt` (provenance and licence per file) and
+finally `index.json`, whose presence marks a complete install. Nothing is ever committed or shipped.
 
 At run time `Layered` wraps the FluidR3_GM `samples.Renderer`: a program or drum the library covers renders from
 its recordings (nearest root key, the velocity layer that holds the velocity, one of several takes), anything else
@@ -14,12 +18,16 @@ from FluidR3_GM. Without the library the engine renders exactly as before.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
 import shutil
+import tarfile
 import tempfile
 import threading
+import urllib.parse
+import zipfile
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from functools import lru_cache
 from math import gcd
@@ -35,6 +43,7 @@ DIR, INDEX, SOURCES = "recorded", "index.json", "SOURCES.txt"
 FILE_SR = 44100
 LICENSES = frozenset({"CC0-1.0", "public-domain"})   # anything else (CC-BY, NC, ND...) is rejected
 WORKERS = 8
+NORM = 0.99                                          # converted files peak here; the index gain restores the level
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -84,6 +93,9 @@ def validate(m: dict) -> dict:
                 covered.add((kind, a, b))
             if kind == "instruments":
                 need(type(g.get("tail")) in (int, float) and g["tail"] >= 0, f"{g['name']}: needs `tail` >= 0")
+                need(type(g.get("sustain", False)) is bool, f"{g['name']}: `sustain` is true or false")
+            else:
+                need("sustain" not in g, f"{g['name']}: a drum is a one-shot, it has no `sustain`")
             need(isinstance(g.get("zones"), list) and g["zones"], f"{g['name']}: needs zones")
             for z in g["zones"]:
                 need(isinstance(z, dict) and isinstance(z.get("url"), str) and _SHA.match(str(z.get("sha256"))),
@@ -95,6 +107,14 @@ def validate(m: dict) -> dict:
                 need(all(midi(z.get(k), 1) for k in ("lovel", "hivel")) and z["lovel"] <= z["hivel"],
                      f"{g['name']}: bad velocity range in {z['url']}")
                 need(midi(z.get("take"), 0, 1 << 16), f"{g['name']}: bad take in {z['url']}")
+                need(isinstance(z.get("member", ""), str), f"{g['name']}: bad member in {z['url']}")
+                need(midi(z.get("offset", 0), 0, 1 << 31), f"{g['name']}: bad offset in {z['url']}")
+                need(type(z.get("volume", 0)) in (int, float) and -60 <= z.get("volume", 0) <= 60,
+                     f"{g['name']}: bad volume in {z['url']}")
+                need(midi(z.get("tune", 0), -1200, 1200), f"{g['name']}: bad tune in {z['url']}")
+                loop = z.get("loop", [0, 1])
+                need(isinstance(loop, list) and len(loop) == 2 and all(midi(v, 0, 1 << 31) for v in loop)
+                     and loop[0] < loop[1], f"{g['name']}: bad loop in {z['url']}")
     return m
 
 
@@ -130,25 +150,25 @@ def install(cache: Path, manifest: dict | None = None, fetch: Fetch | None = Non
     work = Path(tempfile.mkdtemp(dir=cache, prefix=".partial-recorded-"))
     old: Path | None = None
     try:
-        files: dict[str, tuple[str, dict]] = {}      # relative wav path -> (group, zone)
-        index = {"version": 1, "manifest": _digest(m), "sr": FILE_SR, "instruments": [], "drums": []}
+        files: dict[str, dict] = {}                  # relative wav path -> the first zone that uses it
         for kind in ("instruments", "drums"):
             for g in m[kind]:
-                zones = []
                 for z in g["zones"]:
-                    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(z["url"].rsplit("/", 1)[-1]).stem)[:60]
-                    rel = f"{g['name']}/{stem}-{z['sha256'][:8]}.wav"
-                    files.setdefault(rel, (g["name"], z))
-                    zones.append({"file": rel, **{k: z[k] for k in ("root", "lokey", "hikey", "lovel", "hivel",
-                                                                     "take")}})
+                    files.setdefault(_file(g["name"], z), z)
+        peaks = _convert_all(files, work, fetch, progress, workers)
+        index = {"version": 2, "manifest": _digest(m), "sr": FILE_SR, "instruments": [], "drums": []}
+        for kind in ("instruments", "drums"):
+            for g in m[kind]:
                 index[kind].append({"name": g["name"], "gm": g["gm"], **({"tail": g["tail"]} if "tail" in g else {}),
-                                    "zones": zones})
-        _convert_all(files, work, fetch, progress, workers)
+                                    **({"sustain": True} if g.get("sustain") else {}),
+                                    "zones": [_indexed(_file(g["name"], z), z, *peaks[_file(g["name"], z)])
+                                              for z in g["zones"]]})
         lines = ["# Recorded instruments used by gentle-stream (downloaded, never distributed with it).",
                  "# path\turl\tsha256\tsource\tlicense\tlicense_url"]
-        for rel, (_, z) in sorted(files.items()):
+        for rel, z in sorted(files.items()):
             s = m["sources"][z["source"]]
-            lines.append("\t".join((rel, z["url"], z["sha256"], s["name"], s["license"], s["license_url"])))
+            url = z["url"] + (f"#{z['member']}" if z.get("member") else "")
+            lines.append("\t".join((rel, url, z["sha256"], s["name"], s["license"], s["license_url"])))
         (work / SOURCES).write_text("\n".join(lines) + "\n")
         (work / INDEX).write_text(json.dumps(index, indent=1))   # written last: its presence marks a complete install
         work.chmod(0o755)
@@ -174,38 +194,86 @@ def _fetch(url: str, sha256: str, work: Path) -> Path:
     return samples._download(url, sha256, work, [], None)
 
 
-def _convert_all(files: dict[str, tuple[str, dict]], work: Path, fetch: Fetch, progress, workers: int) -> None:
-    import soundfile   # setup only: the run time reads the converted WAVs with scipy
-    total, done, lock = len(files), [0], threading.Lock()
+def _file(group: str, z: dict) -> str:
+    """The converted file of zone `z`: one per downloaded file, archive member and start offset."""
+    name = (z.get("member") or z["url"]).rsplit("/", 1)[-1]
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(urllib.parse.unquote(name)).stem)[:60]
+    key = hashlib.sha256(f"{z['sha256']}|{z.get('member', '')}|{z.get('offset', 0)}".encode()).hexdigest()
+    return f"{group}/{stem}-{key[:8]}.wav"
 
-    def one(rel: str, z: dict) -> None:
-        raw = fetch(z["url"], z["sha256"], work)
+
+def _indexed(rel: str, z: dict, peak: float, rate: int) -> dict:
+    """The index entry of zone `z`: its file, ranges, gain (undoes the normalisation, applies `volume`), tuning and
+    loop in library frames from the start of the converted file."""
+    out = {"file": rel, **{k: z[k] for k in ("root", "lokey", "hikey", "lovel", "hivel", "take")},
+           "gain": peak * 10 ** (z.get("volume", 0) / 20), "tune": z.get("tune", 0)}
+    if "loop" in z:
+        start, end = (round((v - z.get("offset", 0)) * FILE_SR / rate) for v in z["loop"])
+        if 0 <= start < end:
+            out["loop"] = [start, end]
+    return out
+
+
+def _decode(raw: Path, z: dict):
+    import soundfile   # setup only: the run time reads the converted WAVs with scipy
+    try:
+        if not z.get("member"):
+            return soundfile.read(str(raw), dtype="float64", always_2d=True)
+        return soundfile.read(io.BytesIO(_member(raw, z["member"])), dtype="float64", always_2d=True)
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+        raise samples.SetupError(f"cannot decode {z['url']} {z.get('member', '')}: {e}") from e
+
+
+def _member(archive: Path, name: str) -> bytes:
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            return zf.read(name)
+    with tarfile.open(archive) as tf:
+        for m in tf:
+            if m.isfile() and m.name.removeprefix("./") == name:
+                return tf.extractfile(m).read()
+    raise KeyError(f"no member {name}")
+
+
+def _convert_all(files: dict[str, dict], work: Path, fetch: Fetch, progress, workers: int) -> dict[str, tuple]:
+    """Download every distinct file once, convert each of its zones' files; (peak, source rate) per file."""
+    total, done, lock = len(files), [0], threading.Lock()
+    downloads: dict[tuple[str, str], list[str]] = {}
+    for rel, z in files.items():
+        downloads.setdefault((z["url"], z["sha256"]), []).append(rel)
+    peaks: dict[str, tuple[float, int]] = {}
+
+    def one(url: str, sha256: str, rels: list[str]) -> None:
+        raw = fetch(url, sha256, work)
         try:
-            data, rate = soundfile.read(str(raw), dtype="float64", always_2d=True)
-        except (RuntimeError, ValueError, TypeError) as e:
-            raise samples.SetupError(f"cannot decode {z['url']}: {e}") from e
+            for rel in rels:
+                z = files[rel]
+                data, rate = _decode(raw, z)
+                x = _resample(data[z.get("offset", 0):].mean(axis=1), rate, FILE_SR)
+                peak = float(np.max(np.abs(x))) if len(x) else 0.0
+                out = work / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                from scipy.io import wavfile
+                wavfile.write(out, FILE_SR, _pcm16(x / peak * NORM if peak > 0 else x))
+                out.chmod(0o644)
+                with lock:
+                    peaks[rel] = (peak / NORM if peak > 0 else 1.0, int(rate))
+                    done[0] += 1
+                    if progress:
+                        progress(done[0], total)
         finally:
             Path(raw).unlink(missing_ok=True)
-        pcm = _pcm16(_resample(data.mean(axis=1), rate, FILE_SR))
-        out = work / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        from scipy.io import wavfile
-        wavfile.write(out, FILE_SR, pcm)
-        out.chmod(0o644)
-        with lock:
-            done[0] += 1
-            if progress:
-                progress(done[0], total)
 
     if not files:
-        return
-    with ThreadPoolExecutor(max(1, min(workers, total))) as pool:
-        futures = [pool.submit(one, rel, z) for rel, (_, z) in files.items()]
+        return peaks
+    with ThreadPoolExecutor(max(1, min(workers, len(downloads)))) as pool:
+        futures = [pool.submit(one, url, sha, rels) for (url, sha), rels in downloads.items()]
         wait(futures, return_when=FIRST_EXCEPTION)
         for f in futures:
             if f.done() and f.exception() is not None:
                 pool.shutdown(wait=True, cancel_futures=True)
                 raise f.exception()
+    return peaks
 
 
 def _resample(x: np.ndarray, rate: int, sr: int) -> np.ndarray:
@@ -222,12 +290,17 @@ def _pcm16(x: np.ndarray) -> np.ndarray:
 
 # ---------------------------------------------------------------- run time
 class Zone:
-    """One recording: its key and velocity range, root key and take; the audio loads on first use."""
+    """One recording: its key and velocity range, root key and take, gain, tuning (cents) and optional loop
+    (`[start, end]` frames at the library rate); `sustain`: a held note (organ, strings, winds) loops the steady part
+    of a recording that has no loop points. The audio loads on first use."""
 
-    def __init__(self, path: Path, sr: int, root: int, lokey: int, hikey: int, lovel: int, hivel: int, take: int):
+    def __init__(self, path: Path, sr: int, root: int, lokey: int, hikey: int, lovel: int, hivel: int, take: int,
+                 gain: float = 1.0, tune: int = 0, loop: list[int] | None = None, sustain: bool = False):
         self.path, self.sr = path, sr
         self.root, self.lokey, self.hikey, self.lovel, self.hivel, self.take = root, lokey, hikey, lovel, hivel, take
+        self.gain, self.tune, self.loop, self.sustain = gain, tune, loop, sustain
         self._audio: np.ndarray | None = None
+        self._steady: tuple[int, int] | None | bool = False      # False: not looked for yet
 
     @property
     def audio(self) -> np.ndarray:
@@ -239,6 +312,51 @@ class Zone:
             x.flags.writeable = False
             self._audio = x
         return self._audio
+
+    def sustained(self, n: int) -> np.ndarray:
+        """At least `n` frames: the recording, its loop repeated as long as needed (the last 10 ms of each pass
+        crossfaded into the audio just before the loop start, so a seam never clicks even after resampling); the
+        plain recording when it has no loop. A `sustain` zone without loop points loops its steady part instead,
+        from the end of the attack to the player's release, with a 150 ms equal-power crossfade (its seam is not
+        on a waveform cycle)."""
+        x = self.audio
+        if self.loop is not None:
+            if n <= len(x):
+                return x
+            ratio = self.sr / FILE_SR
+            start, end = (min(len(x), round(v * ratio)) for v in self.loop)
+            fade, power = min(int(0.01 * self.sr), (end - start) // 4, start), False
+        else:
+            if not self.sustain or (steady := self.steady()) is None or n <= steady[1]:
+                return x
+            start, end = steady
+            fade, power = min(int(0.15 * self.sr), (end - start) // 3, start), True
+        if end - start < 2 or fade < 1:
+            return x
+        body = x[start:end].astype(np.float64)
+        r = np.linspace(0, 1, fade + 1)[1:]
+        a, b = (np.cos(r * np.pi / 2), np.sin(r * np.pi / 2)) if power else (1 - r, r)
+        body[-fade:] = body[-fade:] * a + x[start - fade:start] * b
+        reps = -(-(n - end) // len(body)) + 1
+        head = x[:end].astype(np.float64)
+        head[-fade:] = body[-fade:]
+        return np.concatenate([head, np.tile(body, reps)])
+
+    def steady(self) -> tuple[int, int] | None:
+        """`[start, end)` frames of the recording's steady part: 200 ms after its level first reaches 3 dB under
+        the sustained level, to the last 50 ms frame still there; None when that is shorter than a second."""
+        if self._steady is False:
+            x, hop = self.audio, max(1, self.sr // 20)
+            frames = len(x) // hop
+            self._steady = None
+            if frames >= 20:
+                env = np.sqrt(np.mean(np.square(x[:frames * hop].reshape(frames, hop), dtype=np.float64), axis=1))
+                level = np.median(env[env >= 0.25 * env.max()])
+                at = np.flatnonzero(env >= 0.7 * level)
+                start, end = (at[0] + 4) * hop, at[-1] * hop
+                if end - start >= self.sr:
+                    self._steady = (int(start), int(end))
+        return self._steady
 
 
 class Sound:
@@ -256,16 +374,24 @@ class Sound:
         return sorted((z for z in pool if (z.root, z.lovel, z.hivel) == (best.root, best.lovel, best.hivel)),
                       key=lambda z: z.take)
 
+    def reference_key(self) -> int:
+        """Middle C when it lies between the lowest and highest recorded root, else the middle recorded root: the
+        key levels are measured on, played from a recording rather than stretched past the end of the range."""
+        roots = sorted(z.root for z in self.zones)
+        return 60 if roots[0] <= 60 <= roots[-1] else roots[len(roots) // 2]
+
     def render(self, key: int, vel: int, hold: float, take: int | None, sr: int) -> np.ndarray:
         takes = self.layer(key, vel)
         z = takes[(take or 0) % len(takes)]
-        gain = vel / z.hivel
+        gain = (vel / 127) ** 2 * z.gain          # SFZ's default velocity curve over layers levelled by `volume`
         if self.tail is None:
             return z.audio.astype(np.float64) * gain
-        ratio = 2 ** ((key - z.root) / 12)
-        n = min(int((hold + self.tail) * sr), int((len(z.audio) - 1) / ratio) + 1)
-        x = z.audio[:n].astype(np.float64) if ratio == 1 else np.interp(
-            np.arange(n) * ratio, np.arange(len(z.audio)), z.audio)
+        ratio = 2 ** ((key - z.root) / 12 + z.tune / 1200)
+        want = int((hold + self.tail) * sr)
+        audio = z.sustained(int(want * ratio) + 2)
+        n = min(want, int((len(audio) - 1) / ratio) + 1)
+        x = audio[:n].astype(np.float64) if ratio == 1 else np.interp(
+            np.arange(n) * ratio, np.arange(len(audio)), audio)
         h, k = int(hold * sr), int(self.tail * sr)
         if h < n:
             fade = np.linspace(1, 0, k + 1)[1:] if k else np.zeros(0)
@@ -284,7 +410,8 @@ class Library:
         for kind, table in (("instruments", self.programs), ("drums", self.drums)):
             for g in index.get(kind, []):
                 zones = [Zone(root / z["file"], sr, z["root"], z["lokey"], z["hikey"], z["lovel"], z["hivel"],
-                              z["take"]) for z in g["zones"]]
+                              z["take"], z.get("gain", 1.0), z.get("tune", 0), z.get("loop"), g.get("sustain", False))
+                         for z in g["zones"]]
                 sound = Sound(g["name"], zones, g["tail"] if kind == "instruments" else None)
                 for a, b in g["gm"]:
                     table[(None if a == "*" else a, b)] = sound
@@ -343,6 +470,11 @@ class Layered:
         """How many takes the recording of this note has (0: not recorded, FluidR3_GM plays it)."""
         s = self.library.sound(chan, bank, program, key)
         return 0 if s is None else len(s.layer(key, vel))
+
+    def reference_key(self, chan: int, bank: int, program: int) -> int:
+        """The key a program's level is measured on: inside its recorded range, middle C for FluidR3_GM."""
+        s = self.library.sound(chan, bank, program, 60)
+        return 60 if s is None else s.reference_key()
 
     def note(self, chan: int, bank: int, program: int, key: int, vel: int, hold: float, tail: float,
              take: int | None = None) -> np.ndarray:

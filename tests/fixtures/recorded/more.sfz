@@ -1,0 +1,2 @@
+<group> lovel=1 hivel=127
+<region> sample=E4 loud.wav lokey=63 hikey=65 pitch_keycenter=64 transpose=12
