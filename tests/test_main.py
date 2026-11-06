@@ -104,14 +104,29 @@ def _fake_soundfont(tmp_path, monkeypatch):
     monkeypatch.setattr(samples, "DEB_SHA256", sha)
 
 
-def test_setup_samples_also_installs_the_recorded_instruments(tmp_path, monkeypatch, capsys, fake_recorded):
+def test_setup_samples_installs_only_the_soundfont_by_default(tmp_path, monkeypatch, capsys, fake_recorded):
     _fake_soundfont(tmp_path, monkeypatch)
     assert main(["setup-samples"]) == 0
     out = capsys.readouterr().out
+    assert fake_recorded["calls"] == 0 and "FluidR3_GM.sf2" in out
+    assert "--recorded" in out                      # says how to opt in to the recorded instruments
+
+
+def test_setup_samples_recorded_also_installs_the_recorded_instruments(tmp_path, monkeypatch, capsys,
+                                                                      fake_recorded):
+    _fake_soundfont(tmp_path, monkeypatch)
+    assert main(["setup-samples", "--recorded"]) == 0
+    out = capsys.readouterr().out
     assert fake_recorded["calls"] == 1
     assert "recorded instruments" in out and "SOURCES.txt" in out and "CC0" in out
-    assert main(["setup-samples"]) == 0
+    assert main(["setup-samples", "--recorded"]) == 0
     assert fake_recorded["calls"] == 1 and "already installed" in capsys.readouterr().out
+
+
+def test_help_explains_that_the_recorded_instruments_are_optional(capsys):
+    with pytest.raises(SystemExit):
+        main(["setup-samples", "--help"])
+    assert "--recorded" in capsys.readouterr().out
 
 
 def test_setup_samples_installs_only_the_missing_recorded_instruments(tmp_path, monkeypatch, capsys,
@@ -121,7 +136,7 @@ def test_setup_samples_installs_only_the_missing_recorded_instruments(tmp_path, 
     _fake_soundfont(tmp_path, monkeypatch)
     samples.setup_samples()                         # an existing user: soundfont from an earlier version
     monkeypatch.setattr(samples, "DEB_URL", (tmp_path / "missing.deb").as_uri())
-    assert main(["setup-samples"]) == 0
+    assert main(["setup-samples", "--recorded"]) == 0
     out = capsys.readouterr().out
     assert fake_recorded["calls"] == 1 and "FluidR3_GM already installed" in out and "recorded instruments" in out
 
@@ -132,7 +147,7 @@ def test_setup_samples_reports_a_recorded_failure_and_keeps_the_soundfont(tmp_pa
 
     _fake_soundfont(tmp_path, monkeypatch)
     fake_recorded["error"] = samples.ChecksumError("checksum mismatch for piano.flac")
-    assert main(["setup-samples"]) == 1
+    assert main(["setup-samples", "--recorded"]) == 1
     assert "checksum mismatch for piano.flac" in capsys.readouterr().err
     assert samples.soundfont_path() is not None
 

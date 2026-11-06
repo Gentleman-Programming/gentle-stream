@@ -115,6 +115,7 @@ It starts playing right away. Press `/`, describe a mood, press `Enter`.
 gentle-stream --mood "rainy night in a small café"        # interpret a mood on start
 gentle-stream --model claude-bridge/claude-haiku-5-5      # choose the model up front
 gentle-stream setup-samples                               # optional: sampled instruments (~120 MB, once)
+gentle-stream setup-samples --recorded                    # optional: recorded CC0 instruments too (~760 MB)
 gentle-stream --help                                      # every flag and key
 ```
 
@@ -177,7 +178,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `--gentle-shell PATH` | `gentle-shell` executable to run (default: `gentle-shell`) |
 | `--device NAME\|INDEX` | Audio output device to play on, remembered for next time (see [Output device](#output-device)) |
 | `devices` | Subcommand: list the audio output devices |
-| `setup-samples` | Subcommand: download the FluidR3_GM soundfont once (see below) |
+| `setup-samples` | Subcommand: download the FluidR3_GM soundfont once; `--recorded` also downloads the recorded CC0 instruments (see below) |
 | `ctl ACTION` | Subcommand: control the music playing in the background (see below) |
 | `moment KIND` | Subcommand: render an `epic` or `suspense` moment to a WAV file (see [Moments](#moments)) |
 
@@ -337,7 +338,8 @@ Optional. Without them every instrument is synthesized and nothing is ever downl
 
 ```bash
 brew install fluid-synth            # or your system's fluidsynth package
-gentle-stream setup-samples         # downloads ~120 MB + ~760 MB once; running it again installs only what is missing
+gentle-stream setup-samples         # downloads ~120 MB once; running it again does nothing
+gentle-stream setup-samples --recorded   # optional: also the recorded instruments (~760 MB)
 ```
 
 | | |
@@ -354,7 +356,7 @@ gentle-stream setup-samples         # downloads ~120 MB + ~760 MB once; running 
 
 ### Recorded instruments
 
-`gentle-stream setup-samples` also downloads a library of real recorded instruments (about 760 MB download, 460 MB installed under `~/.cache/gentle-stream/recorded/`). Where a recording exists it plays instead of FluidR3_GM; anything else falls back to FluidR3_GM, then to the procedural voices. Without the library everything renders exactly as before. The recordings play over FluidSynth, so they need the soundfont and the binding too.
+Optional: `gentle-stream setup-samples --recorded` also downloads a library of real recorded instruments (about 760 MB download, 460 MB installed under `~/.cache/gentle-stream/recorded/`). Where a recording exists it plays instead of FluidR3_GM; anything else falls back to FluidR3_GM, then to the procedural voices. Without the library (plain `setup-samples`) the soundfont sounds exactly as before; to go back after installing it, move `~/.cache/gentle-stream/recorded/` away. The recordings play over FluidSynth, so they need the soundfont and the binding too.
 
 - **Recorded:** grand piano, drawbar/percussive/rock/church organ, accordion, vibraphone, nylon, jazz, clean and distorted guitar, finger/pick/upright bass, violin, viola, cello, contrabass, string section, harp, timpani, trumpet, trombone, tuba, French horn, brass section, tenor sax; snare, side stick, hi-hats, toms, crash, cowbell, orchestral bass drum/snare/clash cymbals, congas, maracas, cabasa, guiro. Several takes per sound, picked deterministically per seed; held organ, string and wind notes loop their sustain.
 - **Stays on FluidR3_GM:** rhodes, celesta, choir, alto sax, timbales, taiko, synths and 808, and the drum-kit kick and ride: no recording with a verified CC0 license was found for them.

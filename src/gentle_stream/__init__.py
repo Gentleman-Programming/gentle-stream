@@ -37,10 +37,11 @@ moments (finite pieces rendered to a WAV file, no audio device needed):
   suspense: sustained tension, a short silence, then the reveal. See gentle-stream moment --help.
 
 sampled instruments (optional):
-  gentle-stream setup-samples downloads the FluidR3_GM soundfont (MIT) and the recorded CC0 / public-domain
-  instruments (about 600 MB, every file listed with its source and license in recorded/SOURCES.txt) once
-  into the user cache; with FluidSynth installed they replace the procedural instruments: a recording where
-  one exists, the soundfont otherwise. Nothing is downloaded otherwise."""
+  gentle-stream setup-samples downloads the FluidR3_GM soundfont (MIT, about 120 MB) once into the user cache;
+  with FluidSynth installed it replaces the procedural instruments. Add --recorded to also download the
+  recorded CC0 / public-domain instruments (about 760 MB, every file listed with its source and license in
+  recorded/SOURCES.txt): a recording plays where one exists, the soundfont otherwise. Without --recorded the
+  soundfont sounds as before. Nothing is downloaded otherwise."""
 
 
 def _progress(done: int, total: int | None) -> None:
@@ -49,8 +50,8 @@ def _progress(done: int, total: int | None) -> None:
     print("\r" + line, end="", flush=True)
 
 
-def setup_samples() -> int:
-    """Install whatever is missing: the FluidR3_GM soundfont, then the recorded instruments."""
+def setup_samples(with_recorded: bool = False) -> int:
+    """Install whatever is missing: the FluidR3_GM soundfont, then (opt-in) the recorded instruments."""
     from . import recorded, samples
 
     if (sf2 := samples.soundfont_path()) is not None:
@@ -65,10 +66,14 @@ def setup_samples() -> int:
             return 1
         print()
         print(f"installed {sf2} (SHA-256 verified; license: {sf2.parent / samples.LICENSES_NAME})")
-    if (lib := recorded.installed(samples.cache_dir())) is not None:
+    if not with_recorded:
+        if recorded.installed(samples.cache_dir()) is None:
+            print("optional: `gentle-stream setup-samples --recorded` also downloads recorded CC0 instruments "
+                  "(about 760 MB)")
+    elif (lib := recorded.installed(samples.cache_dir())) is not None:
         print(f"recorded instruments already installed: {lib} (sources: {lib / recorded.SOURCES})")
     else:
-        print("downloading the recorded instruments (CC0 / public domain, about 600 MB)")
+        print("downloading the recorded instruments (CC0 / public domain, about 760 MB)")
         try:
             lib = samples.setup_recorded(progress=_progress)
         except samples.SetupError as e:
@@ -216,7 +221,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--device", metavar="NAME|INDEX",
                     help="audio output device to play on, remembered for next time (see `gentle-stream devices`)")
     sub = ap.add_subparsers(dest="command", metavar="command")
-    sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) and the recorded CC0 instruments, once")
+    setup = sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) once; "
+                                                 "--recorded adds recorded CC0 instruments")
+    setup.add_argument("--recorded", action="store_true",
+                       help="also download the recorded CC0 / public-domain instruments (about 760 MB)")
     sub.add_parser("devices", help="list the audio output devices")
     ctl_parser = sub.add_parser("ctl", help="control the music playing in the background")
     ctl_parser.add_argument("action", choices=("play", "pause", "toggle", "next", "stop", "status"))
@@ -239,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "devices":
         return devices()
     if args.command == "setup-samples":
-        return setup_samples()
+        return setup_samples(with_recorded=args.recorded)
 
     from . import audio_devices
     from .app import StreamApp
