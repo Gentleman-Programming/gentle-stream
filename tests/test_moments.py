@@ -157,6 +157,7 @@ def test_write_wav_writes_16_bit_stereo_at_the_engine_rate(tmp_path):
 
 # ---------------------------------------------------------------- the endless stream is unchanged
 # sha256 (first 16 hex digits) of 20 bars, seed 7, procedural, computed with the code before moments existed
+# (boombap, bossanova and tango: computed from their modules as committed, which came after moments)
 ENDLESS = {
     "lofi": "6c912cdd0ccedc73",
     "ambient": "94c6781f3e5d2a29",
@@ -169,6 +170,9 @@ ENDLESS = {
     "cumbia": "8d55f26f22e30fef",
     "dubstep": "c49caa0e48aae621",
     "orchestral": "500a8a3a9901f31d",
+    "boombap": "80c26434f92e3e1d",
+    "bossanova": "28bd932e965dad65",
+    "tango": "03c1985d4b071c2d",
 }
 
 

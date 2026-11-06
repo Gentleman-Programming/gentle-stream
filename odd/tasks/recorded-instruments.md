@@ -27,7 +27,7 @@ Branch: `feat/recorded-instruments` (local, from `feat/realtime-music-tui`). Del
 | T5a genre `boombap` | S5, S6 | delegated writer, parallel (3 independent genre units, disjoint files) | done | RED ImportError → GREEN 22 passed; suite 664 passed (excluding the two in-progress genre tests) |
 | T5b genre `bossanova` | S5, S6 | delegated writer, parallel | done | RED ImportError → GREEN 31 passed; suite 695 passed (excluding the in-progress tango test) |
 | T5c genre `tango` | S5, S6 | delegated writer, parallel (writer interrupted after finishing) | done | RED not reported (writer lost); GREEN observed by parent: 33 passed |
-| T5d register the three genres, contract/style tests, README rows (shared files, parent) | S5, S6 | inline | pending | |
+| T5d register the three genres, contract/style tests, README rows | S5, S6 | delegated writer (context backstop) | done | RED 2 failed → GREEN 298 passed; `uv run pytest -q` 761 passed, 62 skipped; 11 earlier genres' endless hashes unchanged |
 
 ## Log
 
@@ -50,3 +50,4 @@ Branch: `feat/recorded-instruments` (local, from `feat/realtime-music-tui`). Del
 - L17 T5a done (writer mw5fuqo1-a-5ipr). README row: | `boombap` | 90s boom bap: hard dusty kick, cracking snare on 2 and 4, swung 16ths, chopped piano/rhodes/vibes stabs, upright or finger bass, sparse hook, vinyl and tape | 84–96 bpm |. Nylon lead maps to jazz guitar GM 26. Sampled kick/snare levelled to 0.6 × procedural RMS (listen). WAVs: /var/folders/k1/2nnhpdfx0wq8k6w8n2nqx9_h0000gn/T/gprCyJOV/ga65RHwQ/tmp.SETJCooaDg (scratch to remove).
 - L18 T5b done (writer mw5fuqsr-b-ez40). README row: | `bossanova` | Nylon guitar batida felt in two, maj7/ninth harmony with chromatic approach chords, upright bass, cross-stick clave and shaker, soft flute, vibraphone or sax melody | 120–140 bpm |. Short moments fall back to the Style tempo range (e.g. 12 s suspense ~114 bpm). WAVs: /var/folders/k1/2nnhpdfx0wq8k6w8n2nqx9_h0000gn/T/gprCyJOV/gaVuBJ5e/tmp.w9eJqfbqBw (scratch to remove).
 - L19 (2026-11-06) Session interrupted ("continua perdon"); writers mw5fuqx2-c-37hp (tango) and mw5esuv7-6-53l0 (T1b) were lost. Tango module + tests were complete (33 passed, parent run) and are committed without the writer's RED evidence. T1b left an uncommitted manifest (13 sources, all CC0-1.0 with pinned refs; 27 instruments, 19 drums, 597 zones), tools/build_recorded_manifest.py and tests (98 passed, 59 skipped); its scratch install is gone, so the real install and level checks are still pending. A follow-up writer resumes T1b.
+- L20 T5d done (writer mw5gs2w4-1-s91d): 14 genres registered; README badge, heading, list and table rows. Tango `Style.bpm` counts half notes (60–70); the model prompt does not say so (listen check).
