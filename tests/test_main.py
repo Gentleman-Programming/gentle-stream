@@ -46,7 +46,7 @@ def test_help_lists_the_setup_samples_command(capsys):
     assert "setup-samples" in capsys.readouterr().out
 
 
-def test_setup_samples_installs_once_and_reports_it(tmp_path, monkeypatch, capsys):
+def test_setup_samples_installs_once_and_reports_it(tmp_path, monkeypatch, capsys, fake_recorded):
     from gentle_stream import samples
     from tests.test_samples import make_deb
 
@@ -61,7 +61,7 @@ def test_setup_samples_installs_once_and_reports_it(tmp_path, monkeypatch, capsy
     assert "already installed" in capsys.readouterr().out
 
 
-def test_setup_samples_reports_a_checksum_mismatch(tmp_path, monkeypatch, capsys):
+def test_setup_samples_reports_a_checksum_mismatch(tmp_path, monkeypatch, capsys, fake_recorded):
     from gentle_stream import samples
     from tests.test_samples import make_deb
 
@@ -71,6 +71,70 @@ def test_setup_samples_reports_a_checksum_mismatch(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(samples, "DEB_SHA256", "0" * 64)
     assert main(["setup-samples"]) == 1
     assert "checksum" in capsys.readouterr().err.lower()
+
+
+@pytest.fixture
+def fake_recorded(tmp_path, monkeypatch):
+    """Replace the recorded-library install (hundreds of MB) with a fake that records its calls."""
+    from gentle_stream import recorded, samples
+
+    state = {"installed": None, "calls": 0, "error": None}
+
+    def setup(progress=None, **kw):
+        state["calls"] += 1
+        if state["error"]:
+            raise state["error"]
+        if progress:
+            progress(5, 10); progress(10, 10)
+        state["installed"] = tmp_path / "cache" / "gentle-stream" / "recorded"
+        return state["installed"]
+
+    monkeypatch.setattr(samples, "setup_recorded", setup)
+    monkeypatch.setattr(recorded, "installed", lambda cache, m=None: state["installed"])
+    return state
+
+
+def _fake_soundfont(tmp_path, monkeypatch):
+    from gentle_stream import samples
+    from tests.test_samples import make_deb
+
+    url, sha = make_deb(tmp_path / "pkg.deb")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(samples, "DEB_URL", url)
+    monkeypatch.setattr(samples, "DEB_SHA256", sha)
+
+
+def test_setup_samples_also_installs_the_recorded_instruments(tmp_path, monkeypatch, capsys, fake_recorded):
+    _fake_soundfont(tmp_path, monkeypatch)
+    assert main(["setup-samples"]) == 0
+    out = capsys.readouterr().out
+    assert fake_recorded["calls"] == 1
+    assert "recorded instruments" in out and "SOURCES.txt" in out and "CC0" in out
+    assert main(["setup-samples"]) == 0
+    assert fake_recorded["calls"] == 1 and "already installed" in capsys.readouterr().out
+
+
+def test_setup_samples_installs_only_the_missing_recorded_instruments(tmp_path, monkeypatch, capsys,
+                                                                     fake_recorded):
+    from gentle_stream import samples
+
+    _fake_soundfont(tmp_path, monkeypatch)
+    samples.setup_samples()                         # an existing user: soundfont from an earlier version
+    monkeypatch.setattr(samples, "DEB_URL", (tmp_path / "missing.deb").as_uri())
+    assert main(["setup-samples"]) == 0
+    out = capsys.readouterr().out
+    assert fake_recorded["calls"] == 1 and "FluidR3_GM already installed" in out and "recorded instruments" in out
+
+
+def test_setup_samples_reports_a_recorded_failure_and_keeps_the_soundfont(tmp_path, monkeypatch, capsys,
+                                                                         fake_recorded):
+    from gentle_stream import samples
+
+    _fake_soundfont(tmp_path, monkeypatch)
+    fake_recorded["error"] = samples.ChecksumError("checksum mismatch for piano.flac")
+    assert main(["setup-samples"]) == 1
+    assert "checksum mismatch for piano.flac" in capsys.readouterr().err
+    assert samples.soundfont_path() is not None
 
 
 # ------------------------------------------------------------ output device

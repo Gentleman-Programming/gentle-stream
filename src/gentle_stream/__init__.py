@@ -32,28 +32,47 @@ audio output:
   the music plays on the system default and the status line says so.
 
 sampled instruments (optional):
-  gentle-stream setup-samples downloads the FluidR3_GM soundfont (MIT) once into the user cache;
-  with FluidSynth installed it replaces the procedural instruments. Nothing is downloaded otherwise."""
+  gentle-stream setup-samples downloads the FluidR3_GM soundfont (MIT) and the recorded CC0 / public-domain
+  instruments (about 600 MB, every file listed with its source and license in recorded/SOURCES.txt) once
+  into the user cache; with FluidSynth installed they replace the procedural instruments: a recording where
+  one exists, the soundfont otherwise. Nothing is downloaded otherwise."""
+
+
+def _progress(done: int, total: int | None) -> None:
+    mb = done / 1e6
+    line = f"  {mb:6.1f} MB" if not total else f"  {100 * done // total:3d}%  {mb:6.1f} / {total / 1e6:.1f} MB"
+    print("\r" + line, end="", flush=True)
 
 
 def setup_samples() -> int:
-    from . import samples
+    """Install whatever is missing: the FluidR3_GM soundfont, then the recorded instruments."""
+    from . import recorded, samples
 
-    print(f"downloading FluidR3_GM (MIT, Frank Wen / Toby Smithe) from {samples.DEB_URL}")
-
-    def progress(done: int, total: int | None) -> None:
-        mb = done / 1e6
-        line = f"  {mb:6.1f} MB" if not total else f"  {100 * done // total:3d}%  {mb:6.1f} / {total / 1e6:.1f} MB"
-        print("\r" + line, end="", flush=True)
-
-    try:
-        sf2 = samples.setup_samples(progress=progress)
-    except samples.SetupError as e:
+    if (sf2 := samples.soundfont_path()) is not None:
+        print(f"FluidR3_GM already installed: {sf2} (license: {sf2.parent / samples.LICENSES_NAME})")
+    else:
+        print(f"downloading FluidR3_GM (MIT, Frank Wen / Toby Smithe) from {samples.DEB_URL}")
+        try:
+            sf2 = samples.setup_samples(progress=_progress)
+        except samples.SetupError as e:
+            print()
+            print(f"gentle-stream: setup-samples failed: {e}", file=sys.stderr)
+            return 1
         print()
-        print(f"gentle-stream: setup-samples failed: {e}", file=sys.stderr)
-        return 1
-    print()
-    print(f"installed {sf2} (SHA-256 verified; license: {sf2.parent / samples.LICENSES_NAME})")
+        print(f"installed {sf2} (SHA-256 verified; license: {sf2.parent / samples.LICENSES_NAME})")
+    if (lib := recorded.installed(samples.cache_dir())) is not None:
+        print(f"recorded instruments already installed: {lib} (sources: {lib / recorded.SOURCES})")
+    else:
+        print("downloading the recorded instruments (CC0 / public domain, about 600 MB)")
+        try:
+            lib = samples.setup_recorded(progress=_progress)
+        except samples.SetupError as e:
+            print()
+            print(f"gentle-stream: setup-samples failed: {e}", file=sys.stderr)
+            return 1
+        print()
+        print(f"installed the recorded instruments in {lib} (SHA-256 verified; CC0 / public domain, "
+              f"every file with its source and license in {lib / recorded.SOURCES})")
     if samples.fluidsynth_module() is None:
         print("note: FluidSynth or pyfluidsynth is missing, so the procedural instruments stay in use "
               "(brew install fluid-synth; uv sync --extra samples)")
@@ -126,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--device", metavar="NAME|INDEX",
                     help="audio output device to play on, remembered for next time (see `gentle-stream devices`)")
     sub = ap.add_subparsers(dest="command", metavar="command")
-    sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) for sampled instruments, once")
+    sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) and the recorded CC0 instruments, once")
     sub.add_parser("devices", help="list the audio output devices")
     ctl_parser = sub.add_parser("ctl", help="control the music playing in the background")
     ctl_parser.add_argument("action", choices=("play", "pause", "toggle", "next", "stop", "status"))
@@ -136,11 +155,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "devices":
         return devices()
     if args.command == "setup-samples":
-        from . import samples
-
-        if (sf2 := samples.soundfont_path()) is not None:
-            print(f"FluidR3_GM already installed: {sf2} (license: {sf2.parent / samples.LICENSES_NAME})")
-            return 0
         return setup_samples()
 
     from . import audio_devices
