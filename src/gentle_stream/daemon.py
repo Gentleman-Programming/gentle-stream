@@ -113,8 +113,10 @@ def state(player, bands: int = 0) -> dict:
         "volume": float(player.volume),
         "level": float(player.level),
         "backend": player.engine.backend,
-        "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar},
-        "style": player.style.to_dict(),
+        "underruns": int(player.underruns),
+        "output_underflows": None if player.output_underflows is None else int(player.output_underflows),
+        "buffered_seconds": float(player.buffered_seconds),
+        **playback,
     }
     if bands > 0:
         out["spectrum"] = [round(float(v), 4) for v in player.spectrum_levels(min(bands, MAX_BANDS))]

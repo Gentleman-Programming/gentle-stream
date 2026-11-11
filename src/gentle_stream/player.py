@@ -71,6 +71,7 @@ class Player:
         self._gain = 0.0
         self.position = 0                # samples played since start
         self.underruns = 0
+        self.output_underflows = 0
         self.level = 0.0
         self._tail = np.zeros(SPECTRUM_SIZE, dtype=np.float32)
         self._window = np.hanning(SPECTRUM_SIZE).astype(np.float32)
@@ -146,6 +147,14 @@ class Player:
             if need <= 0:
                 break
         return np.concatenate(parts) if parts else np.zeros((0, 2), dtype=np.float32)
+
+    @property
+    def audio_output(self) -> str:
+        return getattr(self._stream, 'audio_output', 'sounddevice')
+
+    @property
+    def audio_output_error(self):
+        return self._restart_error or getattr(self._stream, 'error', None)
 
     @property
     def buffered_seconds(self) -> float:

@@ -7,7 +7,10 @@ import sys
 
 CONTROLS = """controls:
   space    play / pause
-  n        next piece with the same mood
+  n        next piece with the same mood (next song during continuous playback)
+  F4       Panic: immediately cut output, reopen it and restart the current track from the beginning
+           keeps musical settings, playlist, pause and volume; no AI call. A hard cut may click.
+           recovery does not guarantee to fix stutter; reopen failures are shown, not Playing.
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
   m        choose the model Gentle Shell uses
   s        save what is playing under a name (prompt and style)
@@ -20,7 +23,17 @@ CONTROLS = """controls:
 background playback:
   the music plays in a background player; gentle-stream attaches to it when it is already playing.
   gentle-stream ctl play|pause|toggle|next|stop|status controls it from any terminal
-  (status prints one JSON line; the others exit 1 when nothing is playing).
+  (status prints one JSON line with underruns, output_underflows and buffered_seconds;
+   diagnostics are null with older players; the others exit 1 when nothing is playing).
+
+native Windows (no WSL):
+  run with Python 3.13+ and the default sounddevice output; no FFplay is needed.
+  native executable or direct .mjs Gentle Shell launcher; see docs/windows-native.md.
+
+optional Windows audio bridge (WSL only):
+  GENTLE_STREAM_AUDIO_OUTPUT=windows gentle-stream streams live PCM to Windows FFplay.
+  sounddevice remains the default. Stop an existing player before selecting a different output.
+  See docs/windows-wsl.md for Windows Python/FFplay paths and diagnostics.
 
 saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).
 
@@ -69,8 +82,12 @@ def ctl(action: str) -> int:
         return 1
     if action == "status":
         style = player.now.style
-        print(json.dumps({"running": True, "playing": player.playing, "name": style.name, "genre": style.genre,
-                          "mood": style.mood}, ensure_ascii=False))
+        status = {"running": True, "playing": player.playing, "name": style.name, "genre": style.genre,
+                  "mood": style.mood, "underruns": player.underruns,
+                  "output_underflows": player.output_underflows, "buffered_seconds": player.buffered_seconds}
+        if getattr(player, 'audio_output', None) == 'windows':
+            status.update(audio_output='windows', audio_output_error=player.audio_output_error)
+        print(json.dumps(status, ensure_ascii=False))
     elif action == "stop":
         player.close()
         return 0

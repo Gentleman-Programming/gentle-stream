@@ -289,9 +289,16 @@ def test_ctl_controls_a_running_player(runtime, capsys):
     wait_for(lambda: player.spectrum(8) is not None and player.now.style.name == "Café Night", timeout=20)
     code, out, err = run_ctl(capsys, "status")
     assert (code, err) == (0, "") and out.endswith("\n") and out.count("\n") == 1
-    assert json.loads(out) == {"running": True, "playing": True, "name": "Café Night", "genre": "jazz",
-                               "mood": "late café"}
-    assert list(json.loads(out)) == ["running", "playing", "name", "genre", "mood"]
+    status = json.loads(out)
+    assert type(status["underruns"]) is int and status["underruns"] >= 0
+    assert type(status["output_underflows"]) is int and status["output_underflows"] >= 0
+    assert type(status["buffered_seconds"]) is float and status["buffered_seconds"] >= 0
+    assert status == {"running": True, "playing": True, "name": "Café Night", "genre": "jazz",
+                      "mood": "late café", "underruns": status["underruns"],
+                      "output_underflows": status["output_underflows"],
+                      "buffered_seconds": status["buffered_seconds"]}
+    assert list(status) == ["running", "playing", "name", "genre", "mood", "underruns",
+                            "output_underflows", "buffered_seconds"]
     assert run_ctl(capsys, "pause") == (0, "", "")
     assert json.loads(run_ctl(capsys, "status")[1])["playing"] is False
     assert run_ctl(capsys, "toggle") == (0, "", "")

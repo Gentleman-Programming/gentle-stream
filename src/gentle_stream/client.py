@@ -146,7 +146,17 @@ class PlayerClient:
         self.pid = state["pid"]
         self.playing, self.volume, self.level = state["playing"], state["volume"], state["level"]
         self.backend = state["backend"]
-        self.now = NowPlaying(Style.from_dict(now["style"]), now["piece"], now["bar"])
+        self.audio_output = state.get('audio_output')
+        self.audio_output_error = state.get('audio_output_error')
+        # Older daemons do not report diagnostics: unknown is not a zero count.
+        self.underruns = state.get("underruns")
+        self.output_underflows = state.get("output_underflows")
+        self.buffered_seconds = state.get("buffered_seconds")
+        self.continuous = state.get("continuous", False)
+        self.playlist_name = state.get("playlist_name")
+        self.playlist_index = state.get("playlist_index")
+        self.now = NowPlaying(Style.from_dict(now["style"]), now["piece"], now["bar"],
+                              now.get("playlist_name"), now.get("playlist_index"))
         self.style = Style.from_dict(state["style"])   # rendered, maybe not audible yet: the base for a mood
 
     def _control(self, cmd: str, **args) -> None:
