@@ -328,6 +328,14 @@ uv run pytest
 
 The suite needs no audio device and no Gentle Shell: the player and the TUI are tested with a fake output stream and a fake shell. When the soundfont is installed, the player and app tests run on the sampled backend.
 
+By default, pytest excludes the hardware-sensitive `performance` marker, not render correctness: genre checks still cover finite audio, levels, seamless bar boundaries and seed determinism. The separate eight-bar benchmark keeps its strict **greater than 10× real time** threshold and can be selected explicitly:
+
+```bash
+uv run pytest -m performance tests/test_genres_contract.py
+```
+
+Explicit `-m` expressions override the default marker filter; `-k` still narrows the selected tests. See [Test commands](docs/ci.md) for focused correctness checks and collection-only inspection. This split does not change hosted CI workflows or establish hardware throughput results.
+
 <div align="right"><a href="#top">Back to top</a></div>
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>

@@ -65,17 +65,26 @@ def test_genre_master_settings_are_bounded(name):
 # ---------------------------------------------------------------- rendering contract
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("name", genres.NAMES)
-def test_genre_renders_cleanly_deterministically_and_fast(name, backend):
+def test_genre_renders_cleanly_and_deterministically(name, backend):
+    e = _engine(name, backend, seed=31)
+    bars = [e.render_bar() for _ in range(BARS)]
+    x = np.concatenate(bars)
+    assert np.all(np.isfinite(x)) and np.max(np.abs(x)) < 1.0 and np.max(np.abs(x)) > 0.01
+    _seamless(bars)
+    again = _engine(name, backend, seed=31)
+    assert np.array_equal(x, np.concatenate([again.render_bar() for _ in range(BARS)]))
+
+
+@pytest.mark.performance
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("name", genres.NAMES)
+def test_genre_renders_faster_than_ten_x_real_time(name, backend):
     e = _engine(name, backend, seed=31)
     t0 = time.perf_counter()
     bars = [e.render_bar() for _ in range(BARS)]
     elapsed = time.perf_counter() - t0
     x = np.concatenate(bars)
-    assert np.all(np.isfinite(x)) and np.max(np.abs(x)) < 1.0 and np.max(np.abs(x)) > 0.01
-    _seamless(bars)
     assert len(x) / SR / elapsed > 10, f"{name}/{backend}: only {len(x) / SR / elapsed:.1f}x real time"
-    again = _engine(name, backend, seed=31)
-    assert np.array_equal(x, np.concatenate([again.render_bar() for _ in range(BARS)]))
 
 
 @pytest.mark.parametrize("name", genres.NAMES)
