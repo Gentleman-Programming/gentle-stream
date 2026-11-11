@@ -13,15 +13,18 @@ from __future__ import annotations
 import json
 import os
 import select
+import queue
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
+from contextlib import contextmanager
 from multiprocessing.connection import AuthenticationError, Client
 
 import numpy as np
 
-from . import daemon
+from . import daemon, platform_runtime, processes
 from .player import NowPlaying, settle
 from .style import Style
 
@@ -50,13 +53,14 @@ def connect() -> PlayerClient:
     paths = daemon.Paths(daemon.runtime_dir())
     try:
         daemon.check_private(paths.dir)
+        platform_runtime.check_file(paths.key)
         key = paths.key.read_bytes()
     except FileNotFoundError:
         raise NoPlayer("nothing is playing") from None
     except (OSError, daemon.RuntimeDirError) as e:
         raise PlayerError(str(e)) from None
     try:
-        conn = Client(str(paths.sock), family="AF_UNIX", authkey=key)
+        conn = Client(platform_runtime.address(paths), family=platform_runtime.FAMILY, authkey=key)
     except (FileNotFoundError, ConnectionRefusedError, AuthenticationError, EOFError):
         raise NoPlayer("nothing is playing") from None
     except OSError as e:
@@ -87,6 +91,9 @@ def ensure(timeout: float = STARTUP_TIMEOUT) -> PlayerClient:
 def _spawn(deadline: float) -> None:
     """Start `gentle-stream daemon` detached from this terminal and wait until it reports its startup."""
     paths = daemon.prepare()
+    if platform_runtime.WINDOWS:
+        _spawn_windows(paths, deadline)
+        return
     r, w = os.pipe()
     try:
         with open(paths.log, "ab") as log:
@@ -111,6 +118,41 @@ def _spawn(deadline: float) -> None:
     message = json.loads(line)
     if "error" in message:
         raise (AudioError if message.get("audio") else PlayerError)(message["error"])
+
+
+def _spawn_windows(paths, deadline):
+    """Anonymous stdout pipe: no inheritable CRT descriptor or select-on-pipe."""
+    messages = queue.Queue(maxsize=1)
+    with open(paths.log, "ab") as log:
+        proc = processes.spawn([sys.executable, "-m", "gentle_stream", "daemon", "--ready-stdout"],
+                                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                                cwd=str(paths.dir), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log)
+
+    def read_ready():
+        try:
+            messages.put(proc.stdout.readline(65536))
+        finally:
+            proc.stdout.close()
+
+    threading.Thread(target=read_ready, daemon=True, name="gentle-stream-ready").start()
+    threading.Thread(target=proc.wait, daemon=True).start()
+    ready = False
+    try:
+        try:
+            line = messages.get(timeout=max(0, deadline - time.monotonic()))
+        except queue.Empty:
+            raise PlayerError(f"the player did not start in time (see {paths.log})") from None
+        if not line:
+            raise PlayerError(f"the player stopped while starting (see {paths.log})")
+        message = json.loads(line)
+        if "error" in message:
+            raise (AudioError if message.get("audio") else PlayerError)(message["error"])
+        ready = True
+    finally:
+        if not ready:
+            processes.kill_tree(proc)
+            proc.wait(timeout=STOP_TIMEOUT)
+        processes.release(proc, detach=ready)
 
 
 class PlayerClient:
