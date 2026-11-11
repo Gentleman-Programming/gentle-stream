@@ -181,6 +181,14 @@ class PlayerClient:
     def next(self) -> None:
         self._control("next")
 
+    def panic(self) -> None:
+        """Restart in the existing daemon; refresh stopped state even on reopen failure."""
+        try:
+            self._control("panic")
+        except PlayerError:
+            self._update(self.request("state"))
+            raise
+
     def set_volume(self, volume: float) -> None:
         self._control("set_volume", volume=float(volume))
 

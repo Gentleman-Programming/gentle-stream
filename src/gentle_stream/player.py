@@ -66,6 +66,10 @@ class Player:
         self._stopping = threading.Event()
         self._producer = threading.Thread(target=self._produce, name="gentle-stream-producer", daemon=True)
         self._stream = None
+        self._control_lock = threading.RLock()  # Stream hooks run here, never in the callback.
+        self._callback_lock = threading.Lock()  # Retire a callback before replacing its queue/state.
+        self._generation = 0
+        self._restart_error: str | None = None
         self.playing = True
         self.volume = float(np.clip(volume, 0, 1))
         self._gain = 0.0
@@ -80,26 +84,89 @@ class Player:
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
         """Open the output stream and start rendering; calling it again is a no-op."""
-        if self._stream is not None:
-            return
-        self._stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
-                                     blocksize=self._blocksize, latency="high", callback=self._callback)
-        self._producer.start()
-        deadline = time.monotonic() + 5
-        while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.005)    # the first bar is ready before the device starts pulling
-        self._stream.start()
+        with self._control_lock:
+            if self._stopping.is_set():
+                raise ValueError("player is closed")
+            if self._stream is not None:
+                return
+            generation = self._generation
+            callback = lambda *args: self._callback(*args, generation=generation)
+            try:
+                self._stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
+                                             blocksize=self._blocksize, latency="high", callback=callback)
+                if not getattr(self._stream, 'reports_output_underflows', True):
+                    self.output_underflows = None
+                if self._producer.ident is None:
+                    self._producer.start()
+                deadline = time.monotonic() + 5
+                while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
+                    time.sleep(0.005)    # the first bar is ready before the device starts pulling
+                self._stream.start()
+                if not self.playing and callable(getattr(self._stream, 'pause', None)):
+                    self._stream.pause()
+                self._restart_error = None
+            except Exception:
+                self.playing = False
+                with self._callback_lock:
+                    self._generation += 1
+                if self._stream is not None:
+                    try:
+                        self._stream.close()
+                    finally:
+                        self._stream = None
+                raise
 
     def close(self) -> None:
-        self._stopping.set()
-        self._wake.set()
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-        if self._producer.is_alive():
-            self._producer.join(timeout=5)
+        with self._control_lock:
+            with self._callback_lock:
+                self._generation += 1
+            self._stopping.set()
+            self._wake.set()
+            if self._stream is not None:
+                self._stream.stop()
+                self._stream.close()
+            if self._producer.is_alive():
+                self._producer.join(timeout=5)
 
     # ------------------------------------------------------------ controls
+    def panic(self) -> None:
+        """Hard cut, discard pending PCM/DSP, reopen and rewind the same audible track."""
+        with self._control_lock:
+            if self._stopping.is_set():
+                raise ValueError("player is closed")
+            playing = self.playing
+            with self._callback_lock:
+                self._generation += 1
+                now = self.now
+            self.playing = False
+            try:
+                if self._stream is not None:
+                    # PortAudio aborts without draining. Windows pause confirms the
+                    # owned sink cut; close then retires its supervisor as usual.
+                    cut = getattr(self._stream, 'abort', None) or getattr(self._stream, 'pause', None)
+                    if not callable(cut):
+                        raise ValueError("audio output does not support an immediate cut")
+                    cut()
+                    self._stream.close()
+                    self._stream = None
+                with self._render_lock:
+                    self.engine.restart(now.track)
+                    with self._lock:
+                        self._chunks.clear()
+                        self._offset = self._buffered = self.position = 0
+                        self._gain = self.level = 0.0
+                        self._tail[:] = 0
+                        self._shown = np.zeros(0)
+                        self.now = replace(self._metadata(), bar=0)
+                        self._explicit_index = self.playlist_index
+                        self._explicit_piece = self.engine.piece
+                self.playing = playing
+                self.start()  # Reuse the live producer, never restart a one-shot Thread.
+            except Exception as error:
+                self.playing = False
+                self._restart_error = f"Panic restart failed: {error}"
+                raise ValueError(self._restart_error) from error
+
     def play(self) -> None:
         self.playing = True
 
@@ -192,6 +259,8 @@ class Player:
         while not self._stopping.is_set():
             if self._buffered < self._prebuffer:
                 with self._render_lock:
+                    if self._stopping.is_set():
+                        return
                     audio = self.engine.render_bar()
                     meta = NowPlaying(self.engine.style, self.engine.piece, self.engine.bar - 1)
                     with self._lock:
@@ -221,7 +290,16 @@ class Player:
         self.position += frames
         return out
 
-    def _callback(self, outdata, frames, time_info, status) -> None:
+    def _callback(self, outdata, frames, time_info, status, generation=None) -> None:
+        with self._callback_lock:
+            if generation is not None and generation != self._generation:
+                outdata[:] = 0
+                return
+            self._render_callback(outdata, frames, time_info, status)
+
+    def _render_callback(self, outdata, frames, time_info, status) -> None:
+        if self.output_underflows is not None and getattr(status, "output_underflow", False):
+            self.output_underflows += 1
         target = self.volume if self.playing else 0.0
         if self._gain == 0.0 and target == 0.0 and not self.playing:
             outdata[:] = 0

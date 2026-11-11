@@ -270,6 +270,25 @@ def test_a_stopped_player_makes_polling_fail_and_controls_harmless(runtime):
     watcher.close()                                 # quitting afterwards is harmless too
 
 
+def test_panic_reopens_without_replacing_daemon_or_losing_current_playlist(runtime):
+    from gentle_stream import client
+
+    player = client.ensure()
+    songs = (Style(name="First", bpm=140), Style(name="Current", bpm=140))
+    player.set_playlist(songs, name="Retained", continuous=True)
+    player.next()
+    wait_for(lambda: player.spectrum(8) is not None and player.now.style == songs[1])
+    player.pause()
+    player.set_volume(.23)
+    pid = player.pid
+    player.panic()
+    assert player.pid == pid and alive(pid) and not player.playing
+    assert player.now.style == songs[1] and player.now.bar == 0
+    assert player.playlist_name == "Retained" and player.playlist_index == 1
+    assert player.continuous and player.volume == .23
+    player.next()
+    player.play()
+    wait_for(lambda: player.spectrum(8) is not None and player.now.style == songs[0])
 # ------------------------------------------------------------ ctl
 @pytest.mark.parametrize("action", ["play", "pause", "toggle", "next", "stop"])
 def test_ctl_without_a_player_says_nothing_is_playing(runtime, capsys, action):
