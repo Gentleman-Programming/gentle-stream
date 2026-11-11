@@ -23,6 +23,8 @@ from textual.worker import get_current_worker
 
 from .bridge import GentleShell, InterpretError, Usage
 from .player import Player
+from .playlist_library import PlaylistLibrary
+from .playlists import default_playlist
 from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 from .style import Style
 
@@ -180,71 +182,172 @@ class SaveDialog(ModalScreen[str | None]):
 
 
 class PresetPicker(ModalScreen[Preset | None]):
-    """Saved prompts: Enter applies the highlighted one, d deletes it, Esc closes."""
+    """Browse saved and built-in generative styles; only user saves can be deleted."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Close"),
         Binding("d,delete", "delete", "Delete"),
+        Binding("backspace", "groups", "Groups"),
+        Binding("c", "continuous", "Continuous from selection"),
+        Binding("left", "switch_playlist('my-playlist')", "My playlist", priority=True),
+        Binding("right", "switch_playlist('default-playlist')", "Default playlist", priority=True),
     ]
     DEFAULT_CSS = """
     PresetPicker { align: center middle; }
-    PresetPicker > Vertical { width: 72; height: auto; max-height: 80%; border: round $primary; padding: 0 1;
+    PresetPicker > Vertical { width: 72; max-width: 100%; height: 80%; border: round $primary; padding: 1 2;
                               background: $surface; }
-    PresetPicker .heading { color: $primary; text-style: bold; }
-    PresetPicker #presets-status { color: $text-muted; }
-    PresetPicker OptionList, PresetPicker OptionList:focus { height: auto; max-height: 20; border: none;
+    PresetPicker .heading { color: $foreground; text-style: bold; }
+    PresetPicker #picker-description { color: $text-muted; }
+    PresetPicker Tabs { background: $surface; }
+    PresetPicker #presets-breadcrumb { color: $accent; }
+    PresetPicker #presets-status { color: $text-muted; margin-top: 1; }
+    PresetPicker #picker-actions { height: 1; }
+    PresetPicker Button { height: 1; min-height: 1; width: auto; border: none; padding: 0 1; }
+    PresetPicker Button:focus { text-style: bold reverse; }
+    PresetPicker OptionList, PresetPicker OptionList:focus { height: 1fr; min-height: 1; border: none;
                                                             background: $surface; }
     """
     EMPTY = "No saved prompts yet — press s to save what is playing"
 
-    def __init__(self, store: PresetStore):
+    def __init__(self, store: PresetStore, library: PlaylistLibrary | None = None):
         super().__init__()
         self.store = store
+        self.library = library if library is not None else PlaylistLibrary()
+        self.is_default = False
+        self.group: str | None = None
+        self.at_groups = True
+        self.groups: list[str | None] = []
+        self.songs: list[Preset] = []
+        self.selected_index = 0
+        self.continuous = False
+
+    @property
+    def selection_name(self) -> str:
+        return "Default playlist" if self.is_default else self.group or "Saved prompts"
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Saved prompts", classes="heading")
-            yield Static(id="presets-status")
+            yield Static("Playlists", classes="heading")
+            yield Static("Generative styles · not recordings", id="picker-description")
+            yield Tabs(Tab("My playlist", id="my-playlist"),
+                       Tab("Default playlist", id="default-playlist"), active="my-playlist")
+            yield Static(id="presets-breadcrumb")
             yield OptionList(id="presets")
+            yield Static(id="presets-status")
+            with Horizontal(id="picker-actions"):
+                yield Button("< My playlists", id="playlist-back", tooltip="Back to groups (Backspace)")
+                yield Button("Repeat from selection", id="playlist-loop", tooltip="Continuous from selected song (c)")
 
     def on_mount(self) -> None:
+        self._populate()
+
+    def action_switch_playlist(self, tab_id: str) -> None:
+        self.query_one(Tabs).active = tab_id
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        self.is_default = event.tab.id == "default-playlist"
+        self.at_groups = not self.is_default
+        self.group = None
+        self._populate()
+
+    def _populate(self) -> None:
         options = self.query_one(OptionList)
-        options.add_options([Option(Text(f"{p.name} — {p.mood or p.style.summary()}"), id=p.name)
-                             for p in self.store.list()])
+        options.clear_options()
+        error = None
+        if self.is_default:
+            self.songs = [Preset(s.name, s.mood, s, "") for s in
+                          sorted(default_playlist(), key=lambda s: s.name.casefold())]
+        elif self.at_groups:
+            legacy = self.store.list()
+            named = self.library.list()
+            error = self.store.error or self.library.error
+            self.groups = [None, *[p.name for p in named]]
+            options.add_options([Option(Text(f"{name or 'Saved prompts'} ({len(legacy) if name is None else len(named[i - 1].songs)})"),
+                                        id=f"group-{i}") for i, name in enumerate(self.groups)])
+            self.songs = []
+        else:
+            self.songs = self.store.list() if self.group is None else self.library.list_songs(self.group)
+            error = self.store.error if self.group is None else self.library.error
+        if not self.at_groups:
+            rows = []
+            for i, song in enumerate(self.songs):
+                prompt = Text(f"🌸  {song.name} — {song.mood or song.style.summary()}")
+                if i + 1 < len(self.songs):
+                    prompt.append("\n ")  # Keep a blank display row even when a description wraps.
+                rows.append(Option(prompt, id=f"song-{i}"))
+            options.add_options(rows)
         if options.option_count:
             options.highlighted = 0
-        self._show_status(self.store.error)
+        self.query_one("#presets-breadcrumb", Static).update(
+            Text("My playlists" if self.at_groups else f"My playlists / {self.selection_name}"))
+        self.query_one("#playlist-back", Button).display = not self.at_groups and not self.is_default
+        self.query_one("#playlist-loop", Button).disabled = self.at_groups or not self.songs
+        self._show_status(error)
         options.focus()
 
     def _show_status(self, error: str | None = None) -> None:
         if error:
             text = f"[$error]{escape(error)}[/]"
+        elif self.is_default:
+            text = "Click / Enter to apply · c repeat from selection · read-only · Esc closes"
+        elif self.at_groups:
+            text = "Click / Enter opens a group · Esc closes"
+            if not self.store.list() and len(self.groups) == 1:
+                text = self.EMPTY + " · try Default playlist"
         elif self.query_one(OptionList).option_count:
-            text = "Enter to apply · d to delete · Esc to close"
+            text = "Click / Enter to apply · c repeat · d deletes song · Backspace groups"
         else:
-            text = self.EMPTY
-        self.query_one("#presets-status", Static).update(text)
+            text = self.EMPTY + " · try Default playlist"
+        self.query_one("#presets-status", Static).update(text + " · Left/Right switch playlists")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        preset = self.store.get(event.option.id)
-        if preset is None:
-            self._show_status(self.store.error or f"“{event.option.id}” is no longer saved.")
+        if self.at_groups:
+            self.group = self.groups[event.option_index]
+            self.at_groups = False
+            self._populate()
             return
-        self.dismiss(preset)
+        self._choose(event.option_index)
+
+    def _choose(self, index: int, continuous: bool = False) -> None:
+        self.selected_index, self.continuous = index, continuous
+        self.dismiss(self.songs[index])
+
+    def action_continuous(self) -> None:
+        index = self.query_one(OptionList).highlighted
+        if self.at_groups or not self.songs or index is None:
+            self._show_status("Select a song inside a playlist first.")
+            return
+        self._choose(index, True)
+
+    def action_groups(self) -> None:
+        if not self.is_default:
+            self.at_groups = True
+            self._populate()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "playlist-back":
+            self.action_groups()
+        elif event.button.id == "playlist-loop":
+            self.action_continuous()
 
     def action_delete(self) -> None:
+        if self.is_default or self.at_groups:
+            return
         options = self.query_one(OptionList)
         if options.highlighted is None:
             return
-        option = options.get_option_at_index(options.highlighted)
+        song = self.songs[options.highlighted]
         try:
-            self.store.delete(option.id)
+            if self.group is None:
+                self.store.delete(song.name)
+            else:
+                self.library.delete(self.group, song.name)
         except PresetError as e:
             self._show_status(str(e))
             return
-        options.remove_option(option.id)
-        self._show_status()
+        self._populate()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -273,7 +376,8 @@ class StreamApp(App):
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
         Binding("s", "save_preset", "Save"),
-        Binding("p", "pick_preset", "Saved"),
+        Binding("p", "pick_preset", "Playlist"),
+        Binding("c", "continuous", "Repeat list"),
         Binding("plus,equals_sign", "volume(5)", "Vol +5"),
         Binding("minus", "volume(-5)", "Vol -5"),
         Binding("up", "volume(1)", "Vol +1"),
@@ -395,14 +499,54 @@ class StreamApp(App):
         self.push_screen(SaveDialog(style.name), named)
 
     def action_pick_preset(self) -> None:
+        picker = PresetPicker(self.presets, self.library)
+
         def chosen(preset: Preset | None) -> None:
             if preset is None:
                 return
             self.workers.cancel_group(self, "interpret")  # a late interpretation must not override the choice
-            self.player.set_style(preset.style)
-            self._status(f"Up next: [b]{escape(preset.name)}[/b] (saved)")
+            selection = ([p.style for p in picker.songs], picker.selected_index, picker.selection_name)
+            if picker.continuous:
+                self._selection = selection
+                self._start_continuous()
+                return
+            try:
+                self.player.set_style(preset.style)
+            except (ValueError, PlayerError) as e:
+                self._status(f"[$error]Could not apply style:[/] {escape(str(e))}")
+                return
+            self._selection = selection
+            source = "default" if picker.is_default else "saved"
+            self._status(f"Up next: [b]{escape(preset.name)}[/b] ({source})")
 
-        self.push_screen(PresetPicker(self.presets), chosen)
+        self.push_screen(picker, chosen)
+
+    def _start_continuous(self) -> None:
+        if self._selection is None:
+            self._status("Select a song in Playlist (p), then enable repeat (c).")
+            return
+        styles, index, name = self._selection
+        self.workers.cancel_group(self, "interpret")
+        try:
+            self.player.set_playlist(styles, start_index=index, name=name, continuous=True)
+            self.player.play()
+        except (ValueError, PlayerError) as e:
+            self._status(f"Could not enable continuous playback: {escape(str(e))}")
+            return
+        self._status(f"Continuous from {escape(styles[index].name)} · {escape(name)}")
+        self._tick()
+
+    def action_continuous(self) -> None:
+        if self.player.continuous is not True:
+            self._start_continuous()
+            return
+        try:
+            self.player.set_continuous(False)
+        except (ValueError, PlayerError) as e:
+            self._status(f"Could not disable continuous playback: {escape(str(e))}")
+            return
+        self._status("Continuous off · current audio continues.")
+        self._tick()
 
     # ------------------------------------------------------------ mood interpretation
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -431,6 +575,7 @@ class StreamApp(App):
         self.call_from_thread(self._interpreted, style, usage)
 
     def _interpreted(self, style: Style, usage: Usage | None) -> None:
+        self._selection = None  # an ordinary mood exits playlist navigation as well as rotation
         cost = f" · {usage.format()}" if usage else ""
         self._status(f"Up next: [b]{escape(style.name)}[/b] · {escape(style.summary())}{cost}")
         if usage:

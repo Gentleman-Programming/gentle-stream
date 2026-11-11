@@ -23,6 +23,9 @@ background playback:
   (status prints one JSON line; the others exit 1 when nothing is playing).
 
 saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).
+named playlists live separately in the same directory's playlist-library.json; no migration.
+continuous playback wraps in alphabetical display order, stays in the background after b,
+and uses saved styles without model calls. A normal song or mood selection exits continuous mode.
 
 sampled instruments (optional):
   gentle-stream setup-samples downloads the FluidR3_GM soundfont (MIT) once into the user cache;
