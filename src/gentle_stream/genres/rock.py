@@ -85,6 +85,8 @@ class Instruments:
                             lambda: self._guitar(notes, d, vel, tone, mute, take))
 
     def _guitar(self, notes, dur, vel, tone, mute, take):
+        if tone == "nylon":
+            return self._clean_guitar(notes, dur, vel, mute, take)
         drive, cab = TONES[tone]
         rel = 0.03 if mute else 0.25
         n = int((dur + rel) * self.sr); t = self._t(n)
@@ -103,6 +105,22 @@ class Instruments:
             env *= np.exp(-t * 12)
         return _fade(y * env * 0.35, self.sr)
 
+    def _clean_guitar(self, notes, dur, vel, mute, take):
+        """Strum independently plucked strings instead of distorting a sustained saw chord."""
+        release = 0.6
+        n = int((dur + release + 0.03) * self.sr)
+        out = np.zeros(n)
+        for i, midi in enumerate(notes):
+            # Independent string excitations and a few milliseconds between picks.
+            pluck = self._lofi.nylon(midi, dur, vel)
+            start = int((0.006 * i + 0.003 * (take % 2)) * self.sr)
+            end = min(n, start + len(pluck))
+            out[start:end] += pluck[:end - start]
+        if mute:
+            out *= np.exp(-self._t(n) * 25)
+        out *= np.clip(np.arange(n)[::-1] / (0.08 * self.sr), 0, 1)
+        return _fade(out * (0.26 / np.sqrt(len(notes))), self.sr)
+
     def lead(self, m, dur, vel=1.0, tone="piano", vibrato=0.0):
         vib = vibrato
         if tone == "pad":
@@ -112,6 +130,8 @@ class Instruments:
                             lambda: self._lead(m, d, vel, tone, vib))
 
     def _lead(self, m, dur, vel, tone, vib):
+        if tone == "nylon":
+            return _fade(_vibrato(self._lofi.nylon(m, dur, vel) * 0.36, 0.2 * vib, self.sr), self.sr)
         drive, cab = TONES[tone]
         n = int((dur + 0.2) * self.sr)
         x = (osc("saw", mtof(m), n, self.sr, phase=self.rng.random())

@@ -222,6 +222,20 @@ def _check_voices(inst):
     assert not np.allclose(open_[:n], other[:n])                # the two takes differ
 
 
+def test_clean_guitar_pluck_decays_and_releases_without_losing_its_cache():
+    inst = ROCK.instruments(np.random.default_rng(19), SR, None)
+    clean = inst.guitar((52,), 1.0, 0.9, "nylon")
+    assert clean is inst.guitar((52,), 1.0, 0.9, "nylon")
+    assert len(clean) >= int(1.5 * SR)  # a string rings out after the player releases it
+    early = float(np.sqrt(np.mean(clean[int(0.05 * SR):int(0.15 * SR)] ** 2)))
+    late = float(np.sqrt(np.mean(clean[int(0.65 * SR):int(0.75 * SR)] ** 2)))
+    assert early > 1.8 * late > 0
+    assert abs(clean[-1]) < 2e-3
+    lead = inst.lead(64, 0.8, 0.9, "nylon")
+    assert len(lead) >= int(1.3 * SR)
+    assert abs(lead[-1]) < 2e-3
+
+
 def test_procedural_voices():
     _check_voices(ROCK.instruments(np.random.default_rng(1), SR, None))
 
