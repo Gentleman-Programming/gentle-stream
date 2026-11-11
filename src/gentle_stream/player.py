@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Sequence
 from collections import deque
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from .engine import SR, Engine
+from .engine import SR, Engine, Track
 from .style import Style
 
 RAMP_SECONDS = 0.03
@@ -31,6 +33,10 @@ class NowPlaying:
     style: Style
     piece: int
     bar: int
+    playlist_name: str | None = None
+    playlist_index: int | None = None
+    playlist_revision: int | None = None
+    track: Track | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -75,7 +81,9 @@ class Player:
         self._tail = np.zeros(SPECTRUM_SIZE, dtype=np.float32)
         self._window = np.hanning(SPECTRUM_SIZE).astype(np.float32)
         self._shown = np.zeros(0)        # last spectrum() result, for the gentle fall
-        self.now = NowPlaying(engine.style, engine.piece, 0)
+        self.now = NowPlaying(engine.style, engine.piece, 0, track=getattr(engine, 'track', None))
+        self._explicit_piece = 0
+        self._explicit_index: int | None = None
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -114,15 +122,115 @@ class Player:
 
     def set_style(self, style: Style) -> None:
         """The new style starts at the next rendered bar, after the audio already buffered."""
-        self.engine.queue_style(style)
+        # Render controls serialize engine/selection changes, not transport hooks.
+        # Never hold _control_lock while waiting for a render: Panic must cut first.
+        with self._render_lock:
+            self.engine.queue_style(style)
+            self._explicit_index = None
+
+    @contextmanager
+    def stage_style(self, style: Style):
+        """Prepare off-thread; yield a nonblocking commit fenced against transport restart."""
+        with self._control_lock:
+            generation = self._generation
+        prepared = self.engine.prepare_playlist((style,)).songs[0]
+
+        def commit():
+            if not self._control_lock.acquire(blocking=False):
+                return False
+            try:
+                if generation != self._generation or self._stopping.is_set():
+                    return None  # obsolete; never publish success
+                if not self._render_lock.acquire(blocking=False):
+                    return False
+                try:
+                    self.engine.queue_style(prepared)
+                    self._explicit_index = None
+                finally:
+                    self._render_lock.release()
+            finally:
+                self._control_lock.release()
+            return True
+
+        yield commit
+
+    def set_playlist(self, styles: Sequence[Style], start_index: int = 0, name: str = "",
+                     continuous: bool = False) -> None:
+        """Atomically queue prepared snapshots from the selected song; preserve play/pause."""
+        with self._render_lock:
+            prepared = self.engine.prepare_playlist(styles, start_index, name, continuous)
+            self.engine._apply_playlist(prepared)
+            self._explicit_index = start_index
+            self._explicit_piece = self.engine.piece + 1
+        self._wake.set()
+
+    def set_continuous(self, enabled: bool) -> None:
+        """Change future scheduling only; never drop/restart the audible audio."""
+        with self._render_lock:
+            self.engine.set_continuous(enabled)
+
+    @property
+    def continuous(self) -> bool:
+        return getattr(self.engine, "continuous", False)
+
+    @property
+    def playlist_name(self) -> str | None:
+        """Configured sequence identity, not necessarily audible yet (see now)."""
+        return getattr(self.engine, "playlist_name", None)
+
+    @property
+    def playlist_index(self) -> int | None:
+        """Selected/rendered index; now.playlist_index follows consumed audio."""
+        return getattr(self.engine, "playlist_index", None)
+
+    def _metadata(self) -> NowPlaying:
+        return NowPlaying(self.engine.style, self.engine.piece, self.engine.bar - 1,
+                          self.playlist_name, self.playlist_index,
+                          getattr(self.engine, "playlist_revision", None), getattr(self.engine, 'track', None))
 
     def next(self) -> None:
-        """A new piece with the same mood, right away: its first bar is rendered now and crossfaded over the
-        pending audio of the old piece, which is dropped. No gap, no jump."""
-        with self._render_lock:  # waits for a bar being rendered, so no old bar can be queued after this
-            self.engine.queue_next()
+        """Advance once in continuous mode, otherwise vary the same mood. Render the
+        first bar now and crossfade over pending audio, retaining the existing Next smoothing."""
+        self._navigate()
+
+    def previous(self, styles: Sequence[Style] | None = None, start_index: int = 0,
+                 name: str = "") -> None:
+        """Previous playlist song. Optional picker snapshot is prepared only on demand.
+
+        A single synchronized operation prepares/selects/replaces audio; rejected snapshots
+        cannot partially configure a queue. Existing configured playlists take precedence.
+        """
+        self._navigate(previous=True, styles=styles, start_index=start_index, name=name)
+
+    def _navigate(self, previous: bool = False, styles: Sequence[Style] | None = None,
+                  start_index: int = 0, name: str = "") -> None:
+        with self._render_lock:  # no old bar can be queued after this
+            if previous and self.playlist_index is None and styles is not None:
+                prepared = self.engine.prepare_playlist(styles, start_index, name, continuous=False)
+                self.engine._apply_playlist(prepared)
+                self._explicit_index = start_index
+                self._explicit_piece = self.engine.piece + 1
+            navigating = previous or self.continuous
+            if navigating:
+                # Rendering may already have crossed a form boundary. Next is relative to
+                # consumed audio, or the last explicit selection not yet consumed, never
+                # to speculative producer lookahead. Consecutive presses each advance once.
+                with self._lock:
+                    now = self.now
+                index = self._explicit_index
+                if (now.playlist_revision == self.engine.playlist_revision
+                        and now.piece >= self._explicit_piece):
+                    index = now.playlist_index
+                if previous:
+                    self.engine.queue_previous(from_index=index)
+                else:
+                    self.engine.queue_next(from_index=index)
+            else:
+                self.engine.queue_next()
             audio = self.engine.render_bar()
-            meta = NowPlaying(self.engine.style, self.engine.piece, self.engine.bar - 1)
+            meta = self._metadata()
+            if navigating:
+                self._explicit_index, self._explicit_piece = meta.playlist_index, meta.piece
             fade = min(int(CROSSFADE_SECONDS * self.engine.sr), len(audio))
             ramp = np.linspace(0, 1, fade, dtype=np.float32)[:, None]
             audio[:fade] *= ramp
@@ -155,6 +263,20 @@ class Player:
     def style(self) -> Style:
         """The style being rendered, which may not be audible yet: the base for the next mood."""
         return self.engine.style
+
+    def playback_state(self) -> dict:
+        """Consistent render snapshot; never obstruct the transport's immediate cut."""
+        with self._render_lock:
+            with self._lock:
+                now = self.now
+            return {
+                "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar,
+                        "playlist_name": now.playlist_name, "playlist_index": now.playlist_index},
+                "style": self.style.to_dict(),
+                "continuous": self.continuous,
+                "playlist_name": self.playlist_name,
+                "playlist_index": self.playlist_index,
+            }
 
     def detach(self) -> None:
         """Leave the music playing without this app; an in-process player cannot outlive it, so it closes."""
@@ -193,7 +315,7 @@ class Player:
             if self._buffered < self._prebuffer:
                 with self._render_lock:
                     audio = self.engine.render_bar()
-                    meta = NowPlaying(self.engine.style, self.engine.piece, self.engine.bar - 1)
+                    meta = self._metadata()
                     with self._lock:
                         self._chunks.append(_Chunk(audio, meta))
                         self._buffered += len(audio)
