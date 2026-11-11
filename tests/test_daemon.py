@@ -102,8 +102,47 @@ def runtime(monkeypatch):
         finally:
             for pid in pids:
                 if alive(pid):
-                    os.kill(pid, signal.SIGKILL)
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # The daemon may exit after the liveness probe.
             shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.mark.parametrize("kill_error", [None, ProcessLookupError, PermissionError])
+def test_runtime_teardown_handles_only_already_exited_processes(monkeypatch, kill_error):
+    from gentle_stream import client
+
+    root = Path("fixture-only-runtime")
+    events = []
+    pid = 12345
+
+    class Player:
+        def close(self):
+            events.append("close")
+
+    def kill(target, sig):
+        assert target == pid
+        events.append((target, sig))
+        if sig == signal.SIGKILL and kill_error is not None:
+            raise kill_error("synthetic teardown error")
+
+    def cleanup(path, *, ignore_errors):
+        assert path == root and ignore_errors is True
+        events.append("cleanup")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **kwargs: str(root))
+    monkeypatch.setattr(client, "connect", lambda: Player())
+    monkeypatch.setattr(sys.modules[__name__], "daemon_pids", lambda run: [pid])
+    monkeypatch.setattr(os, "kill", kill)
+    monkeypatch.setattr(shutil, "rmtree", cleanup)
+    fixture = runtime.__wrapped__(monkeypatch)
+    assert next(fixture) == root / "gentle-stream"
+    with pytest.raises(PermissionError if kill_error is PermissionError else StopIteration):
+        next(fixture)
+    assert events[:3] == ["close", (pid, 0), (pid, signal.SIGKILL)]
+    if kill_error is not PermissionError:
+        assert events == ["close", (pid, 0), (pid, signal.SIGKILL), "cleanup"]
 
 
 def run_ctl(capsys, action):
