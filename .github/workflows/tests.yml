@@ -1,0 +1,65 @@
+name: Tests
+
+"on":
+  pull_request:
+    branches: [main, feat/cross-platform-integration, ci/chain-02-linux-tests]
+  push:
+    branches: [main, feat/cross-platform-integration, ci/chain-02-linux-tests]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Python 3.13 / Linux correctness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source without stored credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Linux PortAudio library
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libportaudio2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.11.14"
+          enable-cache: false
+
+      - name: Install frozen dependencies and run the current correctness suite
+        run: |
+          # Keep caches, the managed interpreter and test state off the checkout.
+          scratch="$(mktemp -d "$RUNNER_TEMP/gs-ci-XXXXXX")"
+          export PYTHONDONTWRITEBYTECODE=1
+          export UV_PYTHON_PREFERENCE=only-managed
+          export UV_PYTHON_INSTALL_DIR="$scratch/python"
+          export UV_CACHE_DIR="$scratch/uv-cache"
+          export UV_PROJECT_ENVIRONMENT="$scratch/venv"
+          export HOME="$scratch/home"
+          export XDG_CONFIG_HOME="$scratch/config"
+          export XDG_CACHE_HOME="$scratch/cache"
+          export XDG_RUNTIME_DIR="$scratch/run"
+          export TMPDIR="$scratch/tmp"
+          export PYTEST_ADDOPTS="-o cache_dir=$scratch/pytest-cache --basetemp=$scratch/pytest-temp"
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" "$TMPDIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          test "$(tr -d '\r\n' < .python-version)" = 3.13
+          uv --version
+          uv python install 3.13
+          uv sync --frozen --python 3.13
+          uv run --frozen --no-sync python -c 'import sys, sounddevice; assert sys.version_info[:2] == (3, 13); assert sys.platform == "linux"; print(sys.version); print(sounddevice.get_portaudio_version())'
+          # pyproject.toml supplies the default non-performance marker filter.
+          # Do not exclude the combined functional render tests with -k.
+          uv run --frozen --no-sync pytest
