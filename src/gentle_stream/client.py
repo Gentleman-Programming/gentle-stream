@@ -181,6 +181,19 @@ class PlayerClient:
     def next(self) -> None:
         self._control("next")
 
+    def previous(self, styles: Sequence[Style] | None = None, start_index: int = 0,
+                 name: str = "") -> None:
+        """Navigate back; optionally prepare the ordinary picker's snapshot atomically."""
+        if styles is None:
+            self._control("previous")
+            return
+        if not isinstance(styles, Sequence) or isinstance(styles, (str, bytes)):
+            raise ValueError("playlist must be a sequence of validated Styles")
+        if any(not isinstance(style, Style) for style in styles):
+            raise ValueError("playlist entries must be validated Styles")
+        self._control("previous", styles=[style.to_dict() for style in styles],
+                      start_index=start_index, name=name)
+
     def set_volume(self, volume: float) -> None:
         self._control("set_volume", volume=float(volume))
 
