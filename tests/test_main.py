@@ -3,7 +3,7 @@ import json
 import pytest
 
 from gentle_stream import main
-from gentle_stream.client import NoPlayer, PlayerError
+from gentle_stream.client import AudioError, NoPlayer, PlayerError
 from gentle_stream.style import Style
 from tests.test_daemon import runtime  # noqa: F401  (fixture: private runtime dir, fake audio, cleanup)
 
@@ -323,3 +323,66 @@ def test_ctl_volume_and_mood_legacy_print_nothing_on_success(monkeypatch, capsys
     assert main(["ctl", "mood", "rain"]) == 0
     assert capsys.readouterr().out == ""
     assert client.requests[0] == ("set_volume", {"volume": 0.6})
+
+
+# ------------------------------------------------------------ ctl start --json (the ensure owner)
+def test_ctl_start_json_uses_ensure_once_to_attach_or_start(monkeypatch, capsys):
+    """`start` is the one ctl action that may spawn; it delegates to client.ensure exactly once, never connect."""
+    client = FakeClient(fake_state(playing=True, volume=0.55))
+    calls = []
+    connected = []
+    monkeypatch.setattr("gentle_stream.client.ensure", lambda: calls.append("ensure") or client)
+    monkeypatch.setattr("gentle_stream.client.connect", lambda: connected.append("connect") or client)
+    assert main(["ctl", "start", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == {"ok": True, "running": True, "playing": True, "volume": 55,
+                    "name": "Midnight Rain", "genre": "lofi", "mood": ""}
+    assert list(data) == ENVELOPE_KEYS
+    assert calls == ["ensure"] and connected == []
+    assert client.detached is True
+
+
+def test_ctl_start_json_reports_the_actual_snapshot_not_assumed_success(monkeypatch, capsys):
+    client = FakeClient(fake_state(playing=False, volume=0.3), apply=False)   # a player that reports it stayed paused
+    monkeypatch.setattr("gentle_stream.client.ensure", lambda: client)
+    monkeypatch.setattr("gentle_stream.client.connect",
+                        lambda: (_ for _ in ()).throw(AssertionError("start must use ensure, not connect")))
+    assert main(["ctl", "start", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True and data["playing"] is False and data["volume"] == 30
+
+
+def test_ctl_start_json_audio_failure_is_a_safe_unavailable_envelope(monkeypatch, capsys):
+    def ensure():
+        raise AudioError("Error querying device -1")
+
+    monkeypatch.setattr("gentle_stream.client.ensure", ensure)
+    monkeypatch.setattr("gentle_stream.client.connect",
+                        lambda: (_ for _ in ()).throw(AssertionError("start must use ensure, not connect")))
+    assert main(["ctl", "start", "--json"]) == 1
+    out = capsys.readouterr().out
+    assert json.loads(out) == {"ok": False,
+                               "error": {"code": "unavailable", "message": "the player is unavailable"}}
+    assert "device" not in out and "-1" not in out and "Traceback" not in out
+
+
+def test_ctl_start_json_start_failure_never_leaks_paths_or_secrets(monkeypatch, capsys):
+    def ensure():
+        raise PlayerError("the player did not start in time (see /secret/player.log)")
+
+    monkeypatch.setattr("gentle_stream.client.ensure", ensure)
+    assert main(["ctl", "start", "--json"]) == 1
+    out = capsys.readouterr().out
+    assert json.loads(out) == {"ok": False,
+                               "error": {"code": "unavailable", "message": "the player is unavailable"}}
+    assert "/secret" not in out and "player.log" not in out and "Traceback" not in out
+
+
+def test_ctl_status_still_never_starts_a_player(monkeypatch, capsys):
+    """status and play keep attaching only; `start` is the only ctl action that may spawn."""
+    monkeypatch.setattr("gentle_stream.client.ensure",
+                        lambda: (_ for _ in ()).throw(AssertionError("status must never start a player")))
+    monkeypatch.setattr("gentle_stream.client.connect",
+                        lambda: (_ for _ in ()).throw(NoPlayer("nothing is playing")))
+    assert main(["ctl", "status", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "running": False}

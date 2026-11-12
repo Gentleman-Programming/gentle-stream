@@ -373,3 +373,23 @@ def test_ctl_json_mood_queues_the_style(runtime, capsys, monkeypatch):
     assert watcher.style.mood == "storm"
     watcher.detach()
     player.close()
+
+
+def test_ctl_json_start_attaches_or_starts_the_player(runtime, capsys):
+    from gentle_stream import client
+
+    code, out, err = run_ctl_json(capsys, ["start"])   # nothing playing: start one (fake audio, no model call)
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["running"] is True and data["playing"] is True
+    assert 0 <= data["volume"] <= 100
+    pid = client.connect().pid
+
+    code, out, err = run_ctl_json(capsys, ["start"])   # already playing: attach to the same player
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["running"] is True
+    checker = client.connect()
+    assert checker.pid == pid                        # no second player
+    checker.close()
+    wait_for(lambda: not alive(pid))

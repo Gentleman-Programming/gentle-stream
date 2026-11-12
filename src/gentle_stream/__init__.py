@@ -19,9 +19,10 @@ CONTROLS = """controls:
 
 background playback:
   the music plays in a background player; gentle-stream attaches to it when it is already playing.
-  gentle-stream ctl play|pause|toggle|next|stop|status|volume|mood controls it from any terminal
-  (status prints one JSON line; volume takes a whole percent 0-100, mood takes text; the others exit 1 when
-  nothing is playing; add --json to any ctl command for one machine envelope).
+  gentle-stream ctl play|pause|toggle|next|stop|status|start|volume|mood controls it from any terminal
+  (status prints one JSON line; start starts or attaches to the music; volume takes a whole percent 0-100,
+  mood takes text; the others exit 1 when nothing is playing; add --json to any ctl command for one machine
+  envelope).
 
 saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).
 
@@ -116,9 +117,9 @@ def ctl(action: str, as_json: bool = False, value: list[str] | None = None,
 
     player = None
     try:
-        from .client import NoPlayer, PlayerError, PlayerGone, connect
-        player = connect()
-        if action == "status":
+        from .client import NoPlayer, PlayerError, PlayerGone, connect, ensure
+        player = ensure() if action == "start" else connect()
+        if action in ("status", "start"):
             state = player.request("state")
             now = state["now"]["style"]
             legacy = {"running": True, "playing": bool(state["playing"]), "name": now["name"],
@@ -180,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) for sampled instruments, once")
     ctl_parser = sub.add_parser("ctl", help="control the music playing in the background")
     ctl_parser.add_argument("action",
-                            choices=("play", "pause", "toggle", "next", "stop", "status", "volume", "mood"))
+                            choices=("play", "pause", "toggle", "next", "stop", "status", "start", "volume", "mood"))
     ctl_parser.add_argument("--json", action="store_true", dest="as_json",
                             help="print one JSON envelope (ok/error) for machines")
     ctl_parser.add_argument("value", nargs="*", metavar="ARG",
