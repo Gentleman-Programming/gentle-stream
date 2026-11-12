@@ -38,6 +38,7 @@ from pathlib import Path
 
 AUDIO_FACTORY_ENV = "GENTLE_STREAM_AUDIO_FACTORY"   # testing seam: "module:attr" replaces sounddevice.OutputStream
 MAX_BANDS = 512
+AUDIO_OUTPUT_ENV = 'GENTLE_STREAM_AUDIO_OUTPUT'
 
 
 class RuntimeDirError(Exception):
@@ -101,24 +102,33 @@ def authkey(paths: Paths) -> bytes:
 
 
 def _stream_factory():
+    mode = os.environ.get(AUDIO_OUTPUT_ENV) or 'sounddevice'
+    if mode not in ('sounddevice', 'windows'):
+        raise ValueError(f'{AUDIO_OUTPUT_ENV} must be sounddevice or windows')
     spec = os.environ.get(AUDIO_FACTORY_ENV)
-    if not spec:
-        return None
-    module, _, attr = spec.partition(":")
-    return getattr(importlib.import_module(module), attr)
+    if spec:
+        module, _, attr = spec.partition(':')
+        return getattr(importlib.import_module(module), attr)
+    if mode == 'windows':
+        from .windows_audio import WindowsPCMStream
+        return WindowsPCMStream
+    return None
 
 
 def state(player, bands: int = 0) -> dict:
     playback = player.playback_state()
     out = {
         "pid": os.getpid(),
-        "playing": bool(player.playing),
+        "playing": bool(player.playing) and not bool(getattr(player, 'audio_output_error', None)),
         "volume": float(player.volume),
         "level": float(player.level),
         "backend": player.engine.backend,
         "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar},
         "style": player.style.to_dict(),
     }
+    out['audio_output'] = getattr(player, 'audio_output', 'sounddevice')
+    if out['audio_output'] == 'windows':
+        out['audio_output_error'] = player.audio_output_error
     if bands > 0:
         out["spectrum"] = [round(float(v), 4) for v in player.spectrum_levels(min(bands, MAX_BANDS))]
     return out
