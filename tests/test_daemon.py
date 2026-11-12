@@ -270,6 +270,28 @@ def test_a_stopped_player_makes_polling_fail_and_controls_harmless(runtime):
     watcher.close()                                 # quitting afterwards is harmless too
 
 
+def test_playlist_snapshot_survives_detach_and_reconnect(runtime):
+    from gentle_stream import client
+
+    first = client.ensure()
+    first.pause()
+    songs = (Style(name="First saved", bpm=140), Style(name="Selected saved", bpm=140))
+    first.set_playlist(songs, start_index=1, name="Evening", continuous=True)
+    assert not first.playing and first.continuous and first.playlist_index == 1
+    pid = first.pid
+    first.detach()
+    attached = client.connect()
+    assert attached.pid == pid and attached.continuous and attached.playlist_name == "Evening"
+    assert not attached.playing
+    attached.next()
+    attached.play()
+    wait_for(lambda: attached.spectrum(8) is not None and attached.now.playlist_index == 0)
+    assert attached.now.style == songs[0] and attached.now.playlist_name == "Evening"
+    attached.set_continuous(False)
+    assert not attached.continuous and attached.playing
+    attached.set_style(Style(name="Normal mood"))
+    assert attached.playlist_name is None and not attached.continuous
+    attached.detach()
 # ------------------------------------------------------------ ctl
 @pytest.mark.parametrize("action", ["play", "pause", "toggle", "next", "stop"])
 def test_ctl_without_a_player_says_nothing_is_playing(runtime, capsys, action):

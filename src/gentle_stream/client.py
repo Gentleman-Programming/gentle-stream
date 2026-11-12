@@ -187,6 +187,19 @@ class PlayerClient:
     def set_style(self, style: Style) -> None:
         self._control("set_style", style=style.to_dict())
 
+    def set_playlist(self, styles: Sequence[Style], start_index: int = 0, name: str = "",
+                     continuous: bool = False) -> None:
+        """Queue a snapshot; the daemon validates the entire sequence atomically."""
+        if not isinstance(styles, Sequence) or isinstance(styles, (str, bytes)):
+            raise ValueError("playlist must be a sequence of validated Styles")
+        if any(not isinstance(style, Style) for style in styles):
+            raise ValueError("playlist entries must be validated Styles")
+        self._control("set_playlist", styles=[style.to_dict() for style in styles],
+                      start_index=start_index, name=name, continuous=continuous)
+
+    def set_continuous(self, enabled: bool) -> None:
+        self._control("set_continuous", enabled=enabled)
+
     def detach(self) -> None:
         """Hang up and leave the music playing."""
         with self._lock:

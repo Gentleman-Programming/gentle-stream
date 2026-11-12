@@ -14,6 +14,8 @@ and applied at the next bar boundary.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -21,7 +23,7 @@ import numpy as np
 
 from . import genres
 from . import samples as _samples
-from .composer import Composer
+from .composer import Composer, FIRST_FORM
 from .genres.base import Piece
 from .genres.lofi import Instruments  # noqa: F401  (re-exported: the procedural lo-fi voices)
 from .mastering import Compressor, ConvolutionReverb, procedural_ir, soft_clip
@@ -37,6 +39,24 @@ def _ir(space_tenths: int, sr: int) -> np.ndarray:
     return procedural_ir(space_tenths / 10, sr, IR_SEED)
 
 
+@dataclass(frozen=True)
+class _Playlist:
+    songs: tuple[Style, ...]
+    start_index: int
+    name: str
+    continuous: bool
+
+
+@dataclass(frozen=True)
+class Track:
+    """Resident restart state for a rendered track, retained with audible metadata."""
+    style: Style
+    seed: int
+    piece: int
+    playlist: _Playlist | None
+    index: int | None
+
+
 # ---------------------------------------------------------------- engine
 class Engine:
     HEADROOM = 24.0  # seconds of scheduling buffer: longest bar plus the longest note tail
@@ -49,7 +69,12 @@ class Engine:
         sf2 = _samples.soundfont_path() if samples is True else (Path(samples) if samples else None)
         renderer = _samples.load_renderer(sf2, sr) if sf2 is not None else None
         self._sampled = _samples.SampleInstruments(renderer, np.random.default_rng(0), sr) if renderer else None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._playlist: _Playlist | None = None
+        self.playlist_name: str | None = None
+        self.playlist_index: int | None = None
+        self.playlist_revision = 0
+        self.continuous = False
         self._pending_style: Style | None = None
         self._pending_next = False
         self._root_rng = np.random.default_rng(seed)
@@ -73,15 +98,75 @@ class Engine:
         self._start_piece(style)
 
     # ------------------------------------------------------------ control (any thread)
-    def queue_style(self, style: Style) -> None:
-        """Play `style` from the next bar on (a new piece)."""
+    @staticmethod
+    def playlist_style(data: dict) -> Style:
+        """Strict playlist boundary, using the existing Style normalizer as the authority."""
+        if not isinstance(data, dict):
+            raise ValueError("playlist style must be an object")
+        style = Style.from_dict(data)
+        canonical = style.to_dict()
+        if any(key not in canonical or value != canonical[key] for key, value in data.items()):
+            raise ValueError("playlist style must contain valid, normalized Style fields")
+        return style
+
+    def prepare_playlist(self, styles: Sequence[Style], start_index: int = 0, name: str = "",
+                         continuous: bool = False) -> _Playlist:
+        """Validate the entire snapshot; no active state changes on any failure."""
+        if not isinstance(styles, Sequence) or isinstance(styles, (str, bytes)) or not styles:
+            raise ValueError("playlist must contain at least one Style")
+        songs = tuple(styles)
+        if type(start_index) is not int or not 0 <= start_index < len(songs):
+            raise ValueError("playlist start_index must be an integer within the playlist")
+        if not isinstance(name, str):
+            raise ValueError("playlist name must be a string")
+        if type(continuous) is not bool:
+            raise ValueError("continuous must be a boolean")
+        for style in songs:
+            if not isinstance(style, Style) or self.playlist_style(style.to_dict()) != style:
+                raise ValueError("playlist entries must be validated Styles")
+        return _Playlist(songs, start_index, name, continuous)
+
+    def _apply_playlist(self, playlist: _Playlist) -> None:
         with self._lock:
+            self._playlist = playlist
+            self.playlist_name = playlist.name
+            self.playlist_revision += 1
+            self.continuous = playlist.continuous
+            self._select_playlist(playlist.start_index)
+
+    def _select_playlist(self, index: int) -> None:
+        """Caller holds _lock. All routes share the same validated selection."""
+        self.playlist_index = index
+        self._pending_style = self._playlist.songs[index]
+        self._pending_next = False
+
+    def set_playlist(self, styles: Sequence[Style], start_index: int = 0, name: str = "",
+                     continuous: bool = False) -> None:
+        self._apply_playlist(self.prepare_playlist(styles, start_index, name, continuous))
+
+    def set_continuous(self, enabled: bool) -> None:
+        with self._lock:
+            if type(enabled) is not bool:
+                raise ValueError("continuous must be a boolean")
+            if enabled and self._playlist is None:
+                raise ValueError("configure a playlist before enabling continuous playback")
+            self.continuous = enabled
+
+    def queue_style(self, style: Style) -> None:
+        """Queue an instrumental style at the next bar boundary."""
+        with self._lock:
+            self._playlist = None
+            self.playlist_name = self.playlist_index = None
+            self.continuous = False
             self._pending_style, self._pending_next = style, False
 
-    def queue_next(self) -> None:
-        """Start a new piece with the same mood from the next bar on."""
+    def queue_next(self, from_index: int | None = None) -> None:
+        """Advance a continuous playlist once; otherwise retain same-mood variation."""
         with self._lock:
-            if self._pending_style is None:
+            if self.continuous:
+                index = self.playlist_index if from_index is None else from_index
+                self._select_playlist((index + 1) % len(self._playlist.songs))
+            elif self._pending_style is None:
                 self._pending_next = True
 
     @property
@@ -112,8 +197,14 @@ class Engine:
     def render_bar(self) -> np.ndarray:
         """Render the next bar as float32 stereo samples of shape (n, 2)."""
         with self._lock:
-            style, nxt = self._pending_style, self._pending_next
-            self._pending_style, self._pending_next = None, False
+            return self._render_bar()
+
+    def _render_bar(self) -> np.ndarray:
+        if (self.continuous and self._pending_style is None and not self._pending_next
+                and self.bar >= sum(bars for _, bars in FIRST_FORM)):
+            self._select_playlist((self.playlist_index + 1) % len(self._playlist.songs))
+        style, nxt = self._pending_style, self._pending_next
+        self._pending_style, self._pending_next = None, False
         if style is not None:
             self._start_piece(style)
         elif nxt:
