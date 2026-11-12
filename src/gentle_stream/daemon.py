@@ -8,7 +8,7 @@ key kept in a 0600 file. Windows uses an authenticated named pipe and current-us
 see platform_runtime.py. Messages are JSON (never pickle), one request and one response per call:
 
     {"cmd": "state", "bands": 48}   -> {"ok": true, "state": {...}}   (spectrum included when bands > 0)
-    {"cmd": "play" | "pause" | "toggle" | "next"}
+    {"cmd": "play" | "pause" | "toggle" | "next" | "panic"}  (panic: cut/reopen current track)
     {"cmd": "set_volume", "volume": 0.5}
     {"cmd": "set_style", "style": {...Style.to_dict()...}}
     {"cmd": "set_playlist", "styles": [...], "start_index": 0, "name": "", "continuous": false}
@@ -168,7 +168,7 @@ def handle(player, request) -> dict:
         cmd = request["cmd"]
         if cmd == "state":
             return {"ok": True, "state": state(player, int(request.get("bands", 0)))}
-        if cmd in ("play", "pause", "toggle", "next"):
+        if cmd in ("play", "pause", "toggle", "next", "panic"):
             getattr(player, cmd)()
         elif cmd == "previous":
             if "styles" not in request:

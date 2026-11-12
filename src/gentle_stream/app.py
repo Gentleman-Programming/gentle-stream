@@ -268,6 +268,7 @@ class StreamApp(App):
     #mood:focus { border: round $primary; }
     """
     BINDINGS = [
+        Binding("f4", "panic", "Panic restart", priority=True),
         Binding("space", "toggle", "Play/Pause"),
         Binding("n", "next", "Next"),
         Binding("slash", "focus_mood", "Mood"),
@@ -352,9 +353,24 @@ class StreamApp(App):
         self._keep_playing = True
         self.exit()
 
-    def action_toggle(self) -> None:
-        self.player.toggle()
+    def _control(self, action: Callable[[], None]) -> bool:
+        """Both keyboard and buttons report rejected controls without claiming success."""
+        try:
+            action()
+        except (ValueError, PlayerError) as e:
+            self._tick()  # A failed reopen may have stopped playback; never leave a stale Playing label.
+            self._status(f"Could not control playback: {escape(str(e))}")
+            return False
         self._tick()
+        return True
+
+    def action_panic(self) -> None:
+        self.workers.cancel_group(self, "interpret")
+        if self._control(self.player.panic):
+            self._status("Current track restarted from the beginning · same settings · no AI call.")
+
+    def action_toggle(self) -> None:
+        self._control(self.player.toggle)
 
     def action_next(self) -> None:
         self.player.next()
@@ -362,8 +378,7 @@ class StreamApp(App):
 
     def action_volume(self, percent: int) -> None:
         """Change the volume by whole percentage points, so repeated steps never drift."""
-        self.player.set_volume((round(self.player.volume * 100) + percent) / 100)
-        self._tick()
+        self._control(lambda: self.player.set_volume((round(self.player.volume * 100) + percent) / 100))
 
     def action_focus_mood(self) -> None:
         self.query_one("#mood", Input).focus()
