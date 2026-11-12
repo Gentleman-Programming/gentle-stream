@@ -169,6 +169,15 @@ class Engine:
             elif self._pending_style is None:
                 self._pending_next = True
 
+    def queue_previous(self, from_index: int | None = None) -> None:
+        """Select the preceding resident entry, independent of automatic rotation."""
+        with self._lock:
+            if self._playlist is None:
+                raise ValueError("Select a song in Playlist (p) before using Previous.")
+            index = self.playlist_index if from_index is None else from_index
+            self._select_playlist((index - 1) % len(self._playlist.songs))
+
+
     @property
     def backend(self) -> str:
         return "procedural" if self._sampled is None else "samples"

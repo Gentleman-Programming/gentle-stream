@@ -12,6 +12,7 @@ key kept in a 0600 file. Messages are JSON (never pickle), one request and one r
     {"cmd": "set_style", "style": {...Style.to_dict()...}}
     {"cmd": "set_playlist", "styles": [...], "start_index": 0, "name": "", "continuous": false}
     {"cmd": "set_continuous", "enabled": false}
+    {"cmd": "previous"}              (optional styles/start_index/name: lazy picker snapshot)
     {"cmd": "stop"}                  -> {"ok": true}, then the process exits and every connection sees EOF
     anything else                    -> {"ok": false, "error": "..."}
 
@@ -133,6 +134,18 @@ def handle(player, request) -> dict:
             return {"ok": True, "state": state(player, int(request.get("bands", 0)))}
         if cmd in ("play", "pause", "toggle", "next"):
             getattr(player, cmd)()
+        elif cmd == "previous":
+            if "styles" not in request:
+                player.previous()
+            else:
+                from .engine import Engine
+
+                styles = request["styles"]
+                if not isinstance(styles, list):
+                    raise ValueError("playlist styles must be a list")
+                player.previous(tuple(Engine.playlist_style(style) for style in styles),
+                                start_index=request.get("start_index", 0),
+                                name=request.get("name", ""))
         elif cmd == "set_volume":
             player.set_volume(float(request["volume"]))
         elif cmd == "set_style":
