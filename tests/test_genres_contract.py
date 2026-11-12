@@ -34,7 +34,7 @@ def _seamless(bars) -> None:
 # ---------------------------------------------------------------- registry
 def test_registry_reserves_every_genre_in_its_own_module():
     assert genres.NAMES == ("lofi", "ambient", "chiptune", "synthwave", "jazz", "rock", "electro", "electrohouse", "cumbia",
-                            "dubstep")
+                            "dubstep", "hiphop", "trap", "chill_electronic", "lofi_trap", "electro_trap", "reggaeton")
     for name in genres.NAMES:
         g = genres.get(name)
         assert isinstance(g, Genre) and g.name == name
@@ -68,6 +68,7 @@ def test_genre_master_settings_are_bounded(name):
 def test_genre_renders_cleanly_and_deterministically(name, backend):
     e = _engine(name, backend, seed=31)
     bars = [e.render_bar() for _ in range(BARS)]
+    assert all(b.ndim == 2 and b.shape[1] == 2 and len(b) > 0 for b in bars)
     x = np.concatenate(bars)
     assert np.all(np.isfinite(x)) and np.max(np.abs(x)) < 1.0 and np.max(np.abs(x)) > 0.01
     _seamless(bars)
