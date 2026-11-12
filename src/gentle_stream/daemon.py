@@ -11,6 +11,8 @@ see platform_runtime.py. Messages are JSON (never pickle), one request and one r
     {"cmd": "play" | "pause" | "toggle" | "next" | "panic"}  (panic: cut/reopen current track)
     {"cmd": "set_volume", "volume": 0.5}
     {"cmd": "set_style", "style": {...Style.to_dict()...}}
+    {"cmd": "prepare_style", "style": {...}} / {"cmd": "commit_style"}
+        Internal connection-local staging; nonblocking commit rejects pre-Panic work.
     {"cmd": "set_playlist", "styles": [...], "start_index": 0, "name": "", "continuous": false}
     {"cmd": "set_continuous", "enabled": false}
     {"cmd": "previous"}              (optional styles/start_index/name: lazy picker snapshot)
@@ -33,6 +35,7 @@ import signal
 import stat
 import sys
 import threading
+from contextlib import ExitStack
 from dataclasses import dataclass
 from multiprocessing.connection import Listener
 from pathlib import Path
@@ -225,7 +228,8 @@ class Server:
             threading.Thread(target=self.serve, args=(conn,), daemon=True, name="gentle-stream-client").start()
 
     def serve(self, conn) -> None:
-        with conn:
+        with conn, ExitStack() as staging:
+            staged = None  # at most one resident preparation per connection
             while True:
                 try:
                     raw = conn.recv_bytes()
@@ -233,9 +237,29 @@ class Server:
                     return
                 try:
                     request = json.loads(raw)
-                    answer = handle(self.player, request if isinstance(request, dict) else {})
-                except ValueError:
+                    request = request if isinstance(request, dict) else {}
+                    if request.get("cmd") == "prepare_style":
+                        from .style import Style
+                        staging.close()
+                        staged = None
+                        if not isinstance(request.get("style"), dict):
+                            raise ValueError("style must be an object")
+                        staged = staging.enter_context(self.player.stage_style(Style.from_dict(request["style"])))
+                        answer = {"ok": True}
+                    elif request.get("cmd") == "commit_style":
+                        if staged is None:
+                            raise ValueError("no staged style")
+                        committed = staged()
+                        if committed is not False:
+                            staging.close()
+                            staged = None
+                        answer = {"ok": True, "state": {"committed": committed}}
+                    else:
+                        answer = handle(self.player, request)
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     request, answer = {}, {"ok": False, "error": "bad request: not JSON"}
+                except (ValueError, TypeError, KeyError) as error:
+                    answer = {"ok": False, "error": f"bad request: {error}"}
                 try:
                     conn.send_bytes(json.dumps(answer).encode())
                 except OSError:

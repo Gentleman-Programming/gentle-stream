@@ -99,8 +99,12 @@ async def test_a_mood_is_interpreted_and_queued():
         await pilot.pause(0.1)
         assert shell.calls[0][0] == "summer storm"
         assert "Summer Storm" in text(app, "#status")
-        queued = player.engine._pending_style or player.engine.style
-        assert (queued.name, queued.mode, queued.mood) == ("Summer Storm", "mixolydian", "summer storm")
+        # Render the queued style through the public control, not private pending state.
+        await pilot.press("n")
+        rendered = player.style
+        assert (rendered.name, rendered.mode, rendered.mood, rendered.bpm) == (
+            "Summer Storm", "mixolydian", "summer storm", 78)
+        assert "voice_lines" not in rendered.to_dict()
         assert app.query_one("#mood").value == ""
 
 
@@ -162,9 +166,11 @@ async def test_plus_and_minus_change_the_volume_in_steps_of_5():
         await pilot.press("minus")
         assert player.volume == pytest.approx(0.75)
         await pilot.pause(0.1)
-        assert "vol 75%" in text(app, "#state")
+        assert "75%" in text(app, "#volume-meter")
+        assert "vol " not in text(app, "#state")
         await pilot.press("plus", "plus")
         assert player.volume == pytest.approx(0.85)
+        assert "85%" in text(app, "#volume-meter")
 
 
 @pytest.mark.asyncio
@@ -174,9 +180,11 @@ async def test_up_and_down_change_the_volume_in_steps_of_1():
         await pilot.press("down")
         assert player.volume == pytest.approx(0.79)
         await pilot.pause(0.1)
-        assert "vol 79%" in text(app, "#state")
+        assert "79%" in text(app, "#volume-meter")
+        assert "vol " not in text(app, "#state")
         await pilot.press("up", "up")
         assert player.volume == pytest.approx(0.81)
+        assert "81%" in text(app, "#volume-meter")
 
 
 @pytest.mark.asyncio
@@ -186,11 +194,14 @@ async def test_volume_steps_stop_at_0_and_100_percent():
         player.set_volume(0.03)
         await pilot.press("minus")
         assert player.volume == 0.0
+        assert "0%" in text(app, "#volume-meter")
         player.set_volume(0.98)
         await pilot.press("plus")
         assert player.volume == 1.0
+        assert "100%" in text(app, "#volume-meter")
         await pilot.press("down")
         assert player.volume == pytest.approx(0.99)
+        assert "99%" in text(app, "#volume-meter")
 
 
 @pytest.mark.asyncio
@@ -289,7 +300,11 @@ async def test_a_failed_interpretation_adds_nothing_to_the_session(store):
         assert "boom" in text(app, "#status")
         assert "session: 17.7k tokens · $0.0008" in text(app, "#model")
         store.save("Rain", RAIN)
-        await pilot.press("p", "enter")                  # applying a saved prompt is free
+        await pilot.press("p")
+        await pilot.pause()
+        await pilot.press("enter")  # Saved prompts group
+        await pilot.pause()
+        await pilot.press("enter")  # applying a saved prompt is free
         await pilot.pause(0.1)
         assert "session: 17.7k tokens · $0.0008" in text(app, "#model")
 
@@ -379,16 +394,20 @@ async def test_p_applies_a_saved_prompt_instantly_without_gentle_shell(store):
         await pilot.press("p")
         await pilot.pause(0.1)
         assert isinstance(app.screen, PresetPicker)
+        await pilot.press("enter")  # Saved prompts group
+        await pilot.pause()
         listed = str(app.screen.query_one("OptionList").get_option_at_index(1).prompt)
         assert "Rainy Café" in listed and "rainy night in a small café" in listed
         await pilot.press("down", "enter")             # Archive, Rainy Café
         await pilot.pause(0.1)
         assert not isinstance(app.screen, PresetPicker)
         assert shell.calls == []
-        queued = player.engine._pending_style or player.engine.style
-        assert queued == saved.style
-        assert (queued.name, queued.mood) == ("Rainy Café", "rainy night in a small café")
         assert "Up next: Rainy Café (saved)" in text(app, "#status")
+        await pilot.press("n")  # render the saved musical settings
+        rendered = player.style
+        assert rendered == saved.style
+        assert (rendered.name, rendered.mood) == ("Rainy Café", "rainy night in a small café")
+        assert shell.calls == []
 
 
 @pytest.mark.asyncio
@@ -398,7 +417,9 @@ async def test_d_deletes_the_highlighted_preset(store):
     app, _ = make_app(FakeShell(), presets=store)
     async with app.run_test() as pilot:
         await pilot.press("p")
-        await pilot.pause(0.1)
+        await pilot.pause()
+        await pilot.press("enter")  # Saved prompts group
+        await pilot.pause()
         await pilot.press("d")
         await pilot.pause(0.1)
         assert [p.name for p in store.list()] == ["Rainy Café"]
@@ -524,14 +545,15 @@ async def test_the_footer_shows_back_and_quit():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size, min_rows", [((160, 45), 20), ((80, 24), 5)])
+@pytest.mark.parametrize("size, min_rows", [((160, 45), 18), ((80, 24), 5)])
 async def test_the_spectrum_fills_the_free_height_and_the_info_sits_by_the_input(size, min_rows):
     app, _ = make_app(FakeShell())
     async with app.run_test(size=size) as pilot:
         await pilot.pause(0.3)
         spectrum = app.query_one("#spectrum")
         assert spectrum.region.height >= min_rows
+        assert app.query_one("#commands").region.height == 1
         assert len(str(spectrum.render()).split("\n")) == spectrum.region.height
         status, mood = app.query_one("#status"), app.query_one("#mood")
         gap = mood.region.y - (status.region.y + status.region.height)
-        assert 0 <= gap <= 3                      # no empty band between the info and the input
+        assert 0 <= gap - app.query_one("#commands").region.height <= 3  # toolbar occupies the gap

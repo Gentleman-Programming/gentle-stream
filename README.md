@@ -3,14 +3,16 @@
 
 <div align="center">
 
+<img src="docs/assets/launcher-icon.png" width="112" height="112" alt="gentle-stream launcher icon: rose spectrum bars on a dark background" />
+
 <h1>gentle-stream</h1>
 
 <p><strong>Endless generative music in your terminal, steered by how you feel.</strong></p>
 
 <p>
 <img src="https://img.shields.io/badge/Python-3.13-F095C8?style=for-the-badge&labelColor=1A1218" alt="Python 3.13">
-<img src="https://img.shields.io/badge/genres-10-F095C8?style=for-the-badge&labelColor=1A1218" alt="10 genres">
-<img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Platform: macOS · Linux">
+<img src="https://img.shields.io/badge/genres-16-F095C8?style=for-the-badge&labelColor=1A1218" alt="10 genres">
+<img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Platform: macOS · Linux · Windows">
 <a href="LICENSE"><img src="https://img.shields.io/badge/MIT-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="License: MIT"></a>
 </p>
 
@@ -30,6 +32,7 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 </p>
 
 <img width="100%" src="docs/assets/tui.svg" alt="The gentle-stream TUI playing a lo-fi piece called Café Rain for the mood 'rainy night in a small café': title, key, tempo and progression, a rose-coloured spectrum, playback state, the chosen model with the session's token usage, the mood input and the key bindings in the footer." />
+
 
 </div>
 
@@ -51,9 +54,9 @@ A composer plans every piece with a **song form** (intro → A → B → A' → 
 
 ---
 
-### Six genres — Lo-fi by default
+### Sixteen genres — Lo-fi by default
 
-Lo-fi, ambient, chiptune, synthwave, jazz, rock/metal, electro, electro house, cumbia and dubstep. The model picks the genre from your mood, or you name it (*"jazz for a rainy night"*). Each genre has its own voices, rhythmic treatment, drum patterns and master chain, and they all share the same composer. See [Genres](#genres).
+Lo-fi, ambient, chiptune, synthwave, jazz, rock/metal, electro-funk, electro house, cumbia, dubstep, hip-hop, trap, chill electronic, lo-fi trap, electro trap and reggaeton. The model picks from the first fifteen genres based on your mood; writing **reggaeton**, **reguetón** or **dembow** routes that genre locally after the same single model interpretation. Every genre shares the composer but has its own rhythm and voices. See [Genres](#genres).
 
 ---
 
@@ -71,7 +74,7 @@ The engine renders one bar at a time, with note tails ringing into the next bar,
 
 ### Saved prompts — Keep what you love
 
-Press `s` to save what is playing under a name. gentle-stream stores the prompt **and the musical parameters it produced**, so pressing `p` later brings that sound back instantly, with no model call. Every piece is still newly generated.
+Press `s` to save the audible song to **Saved prompts**, a **new playlist**, or an **existing playlist**. The prompt and musical parameters are stored, so **Playlist** (`p`) brings that sound back without a model call. **My playlist** opens groups, then their songs in the same panel; **Default playlist** remains a read-only built-in list. Choose **Repeat from selection** to play the full list continuously, starting at the highlighted song and wrapping in alphabetical display order. These are generative styles, not recordings. See [Playlist controls](docs/playlist-controls.md).
 
 ---
 
@@ -94,6 +97,8 @@ Only describing a mood calls a model. The status line shows what that call used,
 | An audio output device | Playback goes through PortAudio (`sounddevice`); on Linux install your distro's PortAudio package (for example `libportaudio2`) |
 | FluidSynth *(optional)* | Only for sampled instruments: `brew install fluid-synth` or your system's `fluidsynth` package |
 
+**Audio libraries:** On Ubuntu/Debian, install `libportaudio2` with your package manager; on macOS, install `portaudio` with Homebrew. These are platform libraries, not Python packages. **Windows can run directly without WSL**, using Python 3.13+ and the default sounddevice output (Windows wheels include PortAudio). See [Native Windows setup](docs/windows-native.md) for PowerShell commands and safe Gentle Shell launcher selection. [Windows/WSL setup](docs/windows-wsl.md) remains an alternative with an optional WSL-to-FFplay output path.
+
 **Install as a command**
 
 ```bash
@@ -109,12 +114,18 @@ cd gentle-stream
 uv run gentle-stream
 ```
 
-It starts playing right away. Press `/`, describe a mood, press `Enter`.
+It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
+
+**WSL optional Windows output:** select `GENTLE_STREAM_AUDIO_OUTPUT=windows` when
+starting a new player to stream live mixed PCM to native Windows FFplay instead
+of WSLg/PulseAudio. The current sounddevice output remains the default. See
+[Windows/WSL setup](docs/windows-wsl.md#optional-native-windows-audio) for required
+Windows Python/FFplay paths, unchanged controls, and unavailable device metrics.
 
 ```bash
 gentle-stream --mood "rainy night in a small café"        # interpret a mood on start
 gentle-stream --model claude-bridge/claude-haiku-5-5      # choose the model up front
-gentle-stream setup-samples                               # optional: sampled instruments (~120 MB, once)
+gentle-stream setup-samples                               # optional: install FluidSynth first, then add sampled instruments
 gentle-stream --help                                      # every flag and key
 ```
 
@@ -154,18 +165,44 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 
 ## Controls
 
+**F2** or the **gear** opens [Appearance settings](docs/appearance.md): live spectrum
+styles, colors, layout and visibility, plus explicit model selection. Preview/Cancel
+is temporary; Save persists independently of songs. F2 always works, even when the
+controls and footer are hidden. The command palette also includes Settings.
+
+The compact clickable command strip sits between the spectrum panel and mood input.
+Tab focuses its buttons; tooltips show full action labels and shortcuts. The model button
+shows the chosen model (or Gentle Shell default), with long IDs elided safely. On narrow
+terminals, focus/scroll each side group independently. **💾 save, ↻ off/on, ✎ mood, ☷ playlists**
+stay left, alongside **Panic**; **⏮ Previous, ⏸ / ▶ play/pause, ⏭ Next** stay centered in the full strip;
+**⚙ chosen model, − / + volume** stay right. **⏮** returns to the previous playlist song
+in displayed order, wrapping at the first song, with repeat on or off. Pause and volume are
+preserved. Select a song in Playlist first; Previous is not a current-song restart and adds
+no keyboard shortcut. Older-daemon rejections remain visible without closing the UI.
+
 | Key | Action |
 | :--- | :--- |
-| `space` | Play / pause (smooth fade, no clicks) |
-| `n` | Next piece with the same mood: new key, progression, melody and groove |
+| `space` | Play / pause; sounddevice fades smoothly, while Windows cuts the owned output to discard buffered audio (a hard cut may click) |
+| `n` | Next piece with the same mood, or next song when continuous playback is on |
+| `F4` / **Panic** | Hard cut, reopen output and restart the audible current track from the beginning; same musical settings, playlist, pause and volume, no AI call |
 | `/` | Describe a mood; `Enter` sends it, `Esc` leaves the input |
-| `m` | Choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
-| `s` | Save what is playing under a name; `Enter` saves (an existing name is replaced), `Esc` cancels |
-| `p` | Saved prompts: `Enter` applies one instantly, `d` or `Delete` removes it, `Esc` closes |
+| `F2` / gear | Settings: appearance and explicit mood model access; always available |
+| `m` | Directly choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
+| `s` | Save the audible song to Saved prompts, new, or existing playlist; `Enter` saves, `Esc` cancels; replacement is scoped to that group |
+| `p` / click **Playlist** | Open **My playlist** groups / **Default playlist**; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; `Esc` closes |
+| `c` / **↻ off/on** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
 | `b` | Back: leave the app and keep the music playing in the background |
 | `q` | Quit and stop the music (a running `gentle-shell` call is cancelled) |
+
+**Panic** discards queued audio and DSP tails rather than fading or selecting another song.
+It reuses the current track's composition seed and musical settings, preserving instrument mutes
+and playlist position even when rendering has looked ahead. F4 works while typing a mood
+or when controls are hidden; a pending mood interpretation is cancelled. The cut may click.
+Reopen failures appear in the status line and playback is shown as paused; retry Panic, then
+resume if needed. Older daemons reject the operation visibly. This is a recovery attempt,
+not a guaranteed fix for every cause of stutter, and it does not restart Gentle Shell.
 
 ### Flags
 
@@ -186,7 +223,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 The music plays in a background player, one per user, that `gentle-stream` starts on its own. Press `b` to leave the app with the music still playing; run `gentle-stream` again and it attaches to the same music (with `--mood`, the new mood is sent to it). `q` stops the music and the player.
 
 ```bash
-gentle-stream ctl status   # {"running": true, "playing": true, "name": "Midnight Rain", "genre": "lofi", "mood": ""}
+gentle-stream ctl status   # playback details and audio diagnostics as one JSON line
 gentle-stream ctl pause    # also: play, toggle, next
 gentle-stream ctl stop     # ends the background player
 ```
@@ -196,7 +233,25 @@ gentle-stream ctl stop     # ends the background player
 | `ctl status` | One JSON line; just `{"running": false}` when nothing plays | `0` |
 | `ctl play`, `pause`, `toggle`, `next`, `stop` | Nothing, or `gentle-stream: nothing is playing` on stderr | `0`, or `1` when nothing plays |
 
-The player listens on a Unix socket in a private directory (`$XDG_RUNTIME_DIR/gentle-stream`, default `~/.cache/gentle-stream/run`, mode `0700`), authenticated with a random key in a `0600` file. A player that crashed is detected and replaced on the next start. If the audio output cannot be opened, `gentle-stream` prints the error and exits with `1`.
+### Audio diagnostics
+
+If audio cuts out, run `gentle-stream ctl status` again and compare the readings:
+
+```json
+{"running": true, "playing": true, "name": "Midnight Rain", "genre": "lofi", "mood": "", "underruns": 0, "output_underflows": 0, "buffered_seconds": 1.2}
+```
+
+| Field | Interpretation |
+| :--- | :--- |
+| `underruns` | Callbacks that could not obtain enough samples from the application's rendered-audio queue |
+| `output_underflows` | Callbacks reporting a host/PortAudio output underflow, even if the application queue was full or playback was paused |
+| `buffered_seconds` | Audio currently queued in the application, in seconds (not the device buffer or total output latency) |
+
+Both counters are cumulative since the current background player (daemon) started; pause, next, Panic and reconnect do not reset them. The queue reading is a changing snapshot, not necessarily the queue depth when a glitch occurred. These metrics help distinguish application starvation from host output trouble, but do **not** prove a root cause or detect every audible artifact. They do not change the sound or buffer settings.
+
+An older running daemon cannot supply these fields: the updated client reports them as JSON `null` (unknown, not zero). They become available after that daemon is stopped and a new one starts. When no player is running, status remains just `{"running": false}`.
+
+On native Windows, the player uses an authenticated JSON named pipe, a current-user-only ACL-protected runtime directory and a Windows file lock; see [Native Windows](docs/windows-native.md#runtime-and-security). On POSIX, the player listens on a Unix socket in a private directory (`$XDG_RUNTIME_DIR/gentle-stream`, default `~/.cache/gentle-stream/run`, mode `0700`), authenticated with a random key in a `0600` file. A player that crashed is detected and replaced on the next start. If the audio output cannot be opened, `gentle-stream` prints the error and exits with `1`.
 
 <div align="right"><a href="#top">Back to top</a></div>
 
@@ -214,7 +269,7 @@ model: claude-bridge/claude-haiku-5-5 · session: 35.4k tokens · $0.0015
 | Action | Calls a model? |
 | :--- | :--- |
 | Describing a mood (`/` or `--mood`) | **Yes** — the only thing that does |
-| Playback, `space`, `n`, volume | No |
+| Playback, `space`, `n`, Panic (`F4`), volume | No |
 | Saving (`s`) or applying (`p`) a prompt | No |
 | Failed or cancelled requests | Add nothing to the total |
 
@@ -228,10 +283,12 @@ The cost is the one Gentle Shell reports, in US dollars. Providers used through 
 
 | | |
 | :--- | :--- |
-| **Save** | `s`, type a name (up to 40 characters), `Enter` |
-| **Apply** | `p`, pick one, `Enter` — starts at the next bar and sounds like it did when you saved it |
-| **Delete** | `p`, highlight one, `d` or `Delete` |
-| **File** | `~/.config/gentle-stream/presets.json` (or `$XDG_CONFIG_HOME/gentle-stream/presets.json`) |
+| **Save** | `s`, song name (up to 40 characters), destination (Saved prompts by default, New playlist, or existing named group), `Enter`; New reveals a playlist name field |
+| **Apply** | Click **Playlist** or press `p`, choose **My playlist**, open a group, click/Enter a song — starts at the next bar and exits rotation |
+| **Built-ins** | Choose **Default playlist** for genre styles without a model call; entries cannot be deleted and browsing/applying them never changes your saved file |
+| **Keyboard** | Left/Right switch playlists even while the entry list is focused or empty; Up/Down highlight entries; `Enter` applies, `Esc` closes |
+| **Delete** | In **My playlist**, highlight one, `d` or `Delete` |
+| **Files** | Legacy `~/.config/gentle-stream/presets.json` stays unchanged; named groups use separate `playlist-library.json` in the same directory (respects `$XDG_CONFIG_HOME`) |
 | **Format** | Plain JSON with the prompt and its musical parameters, rewritten atomically |
 | **Safety** | An unreadable file is reported and never overwritten; invalid entries are skipped; every value is validated like a model answer, so a hand-edited file still plays |
 
@@ -250,11 +307,14 @@ The genre is part of the style: it shows on the details line, survives `n` and i
 | `chiptune` | Four 8-bit channels: pulse lead, fast pulse arpeggios, stepped triangle bass, noise drums; dry and bright | 100–140 bpm | Always procedural (samples do not fit 8-bit) |
 | `synthwave` | Detuned saw pads with opening filters, saw/square lead with echo, 16th arpeggiator, pulsing octave bass, gated-reverb snare | 80–118 bpm | Saw Lead, Polysynth, Synth Bass and the Electronic kit, with the gated tail layered on |
 | `jazz` | Extended chords, rootless swung comping, walking upright bass, brushes and a spang-a-lang ride, strong swing | 60–140 bpm | Acoustic bass, piano, rhodes, jazz guitar, vibraphone, tenor sax, Jazz and Brush kits |
-| `rock` | Double-tracked palm-muted power chords, picked bass, lead guitar, driving drums, crash on every section | 90–140 bpm | Distortion, Overdriven and Clean Guitar, Picked Bass, Strings and the Power kit |
+| `rock` | Double-tracked palm-muted power chords, picked bass, lead guitar, driving drums, crash on every section; `nylon` uses independently plucked procedural strings for clean guitar | 90–140 bpm | Distortion, Overdriven and Clean Guitar, Picked Bass, Strings and the Power kit |
 | `electro` | Classic electro-funk: syncopated 808 breakbeats (never four-on-the-floor), funky 16th synth bass, robotic square riffs and arpeggios, cowbell; tight and dry | 100–130 bpm | The real TR-808 kit, Saw/Square Lead, Synth Bass, Synth Strings |
 | `electrohouse` | Four-on-the-floor kick, clap on 2 and 4, off-beat open hats, dirty distorted bass riffs, sidechain-pumped supersaws, risers and snare rolls into drops | 124–132 bpm | Electronic kit, Saw Lead, Polysynth; the dirty bass stays synthesized |
 | `cumbia` | Guacharaca "ch-chik", tambora and congas, root-fifth bass with pickups, off-beat keyboards, accordion lead (digital-cumbia synth when bright) | 85–110 bpm | Guiro, congas, maracas, cabasa, timbales, Finger Bass, Accordion, Tango Accordion, Drawbar Organ |
 | `dubstep` | 140 bpm half-time drums, deep sine sub, LFO wobble bass synced to 1/4–1/16 and triplets, growls, risers and drops | 136–140 bpm | Power and Standard kit drums; sub, wobble, growl and risers stay synthesized |
+| `reggaeton` | Original two-bar dembow variants, off-beat chords, short bass pickups and a plucked nylon-guitar colour | 85–110 bpm | Nylon Guitar program and the TR-808 kit; procedural mode plucks synthesized strings |
+
+Explicit **reggaeton**, **reguetón**, **regueton**, **reggaetón** or **dembow** in a mood selects the new style locally after the existing single model call. The extra genre is not added to the model's normal prompt: ordinary moods keep their prompt length and call count. A built-in playlist style needs no model call. This does not guarantee an exact provider price or an acoustic-guitar recording; no live listening comparison has been made.
 
 `rock` covers metal too: with busy drums at energy 0.7 or more it switches to 16th-note chugs and gallops, double kick and china accents.
 
@@ -326,15 +386,24 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 uv run pytest
 ```
 
-The suite needs no audio device and no Gentle Shell: the player and the TUI are tested with a fake output stream and a fake shell. When the soundfont is installed, the player and app tests run on the sampled backend.
+The default functional suite includes genre shape, finite/level, seam and determinism
+checks on every available backend, with no render-speed gate. The suite needs no audio
+device and no Gentle Shell: player and TUI tests use a fake output stream and shell.
+When the soundfont is installed, player and app tests run on the sampled backend.
 
-By default, pytest excludes the hardware-sensitive `performance` marker, not render correctness: genre checks still cover finite audio, levels, seamless bar boundaries and seed determinism. The separate eight-bar benchmark keeps its strict **greater than 10× real time** threshold and can be selected explicitly:
+The unchanged strict **>10× real-time** eight-bar benchmark is opt-in:
 
 ```bash
 uv run pytest -m performance tests/test_genres_contract.py
+# Existing environment: python -m pytest -m performance tests/test_genres_contract.py
 ```
 
-Explicit `-m` expressions override the default marker filter; `-k` still narrows the selected tests. See [Test commands](docs/ci.md) for focused correctness checks and collection-only inspection. This split does not change hosted CI workflows or establish hardware throughput results.
+Performance depends on hardware and host load; constrained machines may fail this
+benchmark without failing audio correctness. Explicit `-m` overrides the default
+`not performance` selection. [CI on Linux, macOS, WSL and native Windows](docs/ci.md)
+runs functional genre coverage, not this benchmark. Native Windows runs a focused
+selection; POSIX jobs run the broader default suite. Configuration is not evidence
+of hosted CI success or a real audio-device check.
 
 <div align="right"><a href="#top">Back to top</a></div>
 

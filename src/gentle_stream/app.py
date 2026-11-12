@@ -9,22 +9,27 @@ be saved under a name and applied later, instantly, without asking Gentle Shell 
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+import time
+
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.markup import escape
-from textual.containers import Vertical
+from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
-from textual.widgets import Footer, Header, Input, OptionList, Static
+from textual.widgets import Button, Footer, Header, Input, OptionList, Select, Static, Tab, Tabs
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
 from .appearance import Preferences, PreferenceStore
 from .appearance_ui import SettingsScreen
 from .visualizer import Spectrum
+from .volume_meter import render_compact_volume_meter, render_volume_meter
 from .bridge import GentleShell, InterpretError, Usage
+from .client import PlayerError
 from .player import Player
 from .playlist_library import PlaylistLibrary
 from .playlists import default_playlist
@@ -32,7 +37,6 @@ from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 from .style import Style
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
-BLOCKS = " ▁▂▃▄▅▆▇█"
 
 # gentlemanprogramming.com palette
 GENTLEMAN_THEME = Theme(
@@ -68,33 +72,8 @@ GENTLEMAN_THEME = Theme(
         "scrollbar-background": "#1a1218",
     },
 )
-# spectrum rows, top to bottom: rose peaks over a muted base
-SPECTRUM_COLORS = ("#ff76c3", "#f095c8", "#ffb1dd", "#a78e9b", "#76616b")
-
-
 def model_label(model: str | None) -> str:
     return model or DEFAULT_MODEL_LABEL
-
-
-class Spectrum(Static):
-    """Block-character bars filling the widget, one column per log-spaced band, shaded from rose (top) to muted."""
-
-    MIN_ROWS = 5
-
-    def __init__(self, player: Player, **kw):
-        super().__init__(**kw)
-        self.player = player
-
-    def tick(self) -> None:
-        width = max(8, self.size.width or 48)
-        rows_n = max(self.MIN_ROWS, self.size.height or self.MIN_ROWS)
-        levels = self.player.spectrum(width) * rows_n * 8
-        rows = []
-        for i, r in enumerate(range(rows_n - 1, -1, -1)):    # i = 0 is the top row
-            color = SPECTRUM_COLORS[min(len(SPECTRUM_COLORS) - 1, i * len(SPECTRUM_COLORS) // rows_n)]
-            cell = (levels - r * 8).clip(0, 8).astype(int)
-            rows.append(Text("".join(BLOCKS[c] for c in cell), style=color))
-        self.update(Text("\n").join(rows))
 
 
 class ModelPicker(ModalScreen[str | None]):
@@ -103,10 +82,11 @@ class ModelPicker(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "dismiss_picker", "Cancel")]
     DEFAULT_CSS = """
     ModelPicker { align: center middle; }
-    ModelPicker > Vertical { width: 60; height: auto; max-height: 80%; border: round $primary; padding: 0 1;
-                             background: $surface; }
-    ModelPicker .heading { color: $primary; text-style: bold; }
-    ModelPicker #picker-status { color: $text-muted; }
+    ModelPicker > Vertical { width: 60; max-width: 100%; height: auto; max-height: 80%;
+                             border: round $primary; padding: 1 2; background: $surface; }
+    ModelPicker .heading { color: $foreground; text-style: bold; }
+    ModelPicker #model-description { color: $text-muted; }
+    ModelPicker #picker-status { color: $accent; margin-top: 1; }
     ModelPicker OptionList, ModelPicker OptionList:focus { height: auto; max-height: 20; border: none;
                                                           background: $surface; }
     """
@@ -117,7 +97,8 @@ class ModelPicker(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Model for mood interpretation", classes="heading")
+            yield Static("Choose a mood model", classes="heading")
+            yield Static("For future moods · music keeps playing", id="model-description")
             yield Static("Loading models…", id="picker-status")
             yield OptionList(Option(DEFAULT_MODEL_LABEL, id=""), id="models")
 
@@ -136,9 +117,9 @@ class ModelPicker(ModalScreen[str | None]):
 
     def _show(self, models: list[str]) -> None:
         options = self.query_one(OptionList)
-        options.add_options([Option(m, id=m) for m in models])
+        options.add_options([Option(Text(m), id=m) for m in models])
         options.highlighted = 0
-        self.query_one("#picker-status", Static).update(f"{len(models)} models · current: {model_label(self.shell.model)}")
+        self.query_one("#picker-status", Static).update(Text(f"{len(models)} models · current: {model_label(self.shell.model)}"))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id or None)
@@ -408,13 +389,37 @@ class StreamApp(App):
     Screen { background: $background; }
     Header { background: #1a1218; color: $primary; }
     #panel { padding: 1 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; }
-    #title { text-style: bold; color: $primary; }
+    #title-row { height: 1; }
+    #title { text-style: bold; color: $primary; width: 1fr; }
+    #playlist { height: 1; min-height: 1; width: 12; border: none; background: $panel; color: $primary; }
+    #playlist:focus { text-style: bold reverse; }
+    #metadata { height: 1; }
+    #details, #mood-line { width: 1fr; }
     #details, #model { color: $text-muted; }
     #mood-line { color: $accent; text-style: italic; }
     #spectrum { height: 1fr; min-height: 5; margin: 1 0; }
     #state { color: $text-muted; }
     #status { margin-top: 1; }
-    #mood { dock: bottom; margin: 0 1 1 1; border: round $panel; background: $surface; }
+    #commands { height: 1; margin: 0 1; overflow: hidden; background: #000000; }
+    #commands-left, #commands-right { width: 1fr; height: 1fr; overflow-x: auto; overflow-y: hidden;
+                                      scrollbar-size-horizontal: 0; align-vertical: bottom; }
+    #commands-right { align-horizontal: right; }
+    #transport { width: 15; height: 1fr; align-vertical: bottom; }
+    #volume-meter { width: 13; min-width: 13; height: 1; background: #000000; overflow: hidden; }
+    #transport Button { width: 5; }
+    #commands Button { height: 1; min-height: 1; min-width: 5; width: auto; border: none;
+                       padding: 0 1; background: #000000; color: $primary; }
+    #commands Button:focus { text-style: bold; color: $foreground; }
+    #commands #play.paused, #commands #play.paused:focus { color: #00a6ed; }
+    #commands #model-command { min-width: 13; }
+    #commands #continuous { min-width: 7; }
+    Screen.compact #panel { padding: 0 1; margin-top: 0; }
+    Screen.compact #commands, Screen.compact #volume-meter { height: 1; }
+    Screen.compact #spectrum { margin: 0; }
+    Screen.compact #details, Screen.compact #mood-line, Screen.compact #state,
+    Screen.compact #model, Screen.compact #status { height: 1; }
+    Screen.compact #status { margin-top: 0; }
+    #mood { margin: 0 1 1 1; border: round $panel; background: $surface; }
     #mood:focus { border: round $primary; }
     """
     BINDINGS = [
@@ -441,9 +446,12 @@ class StreamApp(App):
         super().__init__()
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
         self.presets = presets if presets is not None else PresetStore()
+        self.library = PlaylistLibrary()
         self.preference_store = preference_store if preference_store is not None else PreferenceStore()
         self.preferences = self.preference_store.load()
         self._ui_timer = None
+        self._selection: tuple[list[Style], int, str] | None = None
+        self._buttons: dict[str, Button] = {}
         self.session_usage: Usage | None = None  # tokens and cost of every successful interpretation so far
         self._keep_playing = False                # `b` leaves the music playing, `q` stops it
         self.register_theme(GENTLEMAN_THEME)
@@ -452,13 +460,32 @@ class StreamApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="panel"):
-            yield Static(id="title")
-            yield Static(id="details")
-            yield Static(id="mood-line")
+            with Horizontal(id="title-row"):
+                yield Static(id="title")
+                yield Button("Playlist", id="playlist")
+            with Horizontal(id="metadata"):
+                yield Static(id="details")
+                yield Static(id="mood-line")
             yield Spectrum(self.player, id="spectrum")
             yield Static(id="state")
             yield Static(id="model")
             yield Static("Press / to describe a mood.", id="status")
+        with Horizontal(id="commands"):
+            with HorizontalScroll(id="commands-left"):
+                yield Button("Panic", id="panic", tooltip="Hard cut and restart current track (F4); no AI call")
+                yield Button("💾", id="save-command", tooltip="Save audible song (s)")
+                yield Button("↻ off", id="continuous", tooltip="Continuous playlist from selection (c)")
+                yield Button("✎", id="mood-command", tooltip="Describe a mood (/); Enter sends, Esc leaves")
+                yield Button("☷", id="playlist-command", tooltip="Browse playlists (p)")
+            with Horizontal(id="transport"):
+                yield Button("⏮", id="previous", tooltip="Previous song in playlist (wraps to last)")
+                yield Button("⏸", id="play", tooltip="Play / pause (Space)")
+                yield Button("⏭", id="next", tooltip="Next piece (n); next song when continuous")
+            with HorizontalScroll(id="commands-right"):
+                yield Button("-", id="quieter", tooltip="Volume down 5% (-); Down: 1%")
+                yield Static(id="volume-meter")
+                yield Button("+", id="louder", tooltip="Volume up 5% (+); Up: 1%")
+                yield Button("⚙  default", id="model-command", tooltip="Settings (F2) · direct model picker (m)")
         yield Input(placeholder="Describe a feeling, a concept, a place… then Enter (Esc to leave)", id="mood")
         yield Footer()
 
@@ -466,7 +493,19 @@ class StreamApp(App):
         # keep references: the timer also fires while a modal is on top or the app is shutting down,
         # when queries would search another screen
         self._w = {name: self.query_one(f"#{name}") for name in ("title", "details", "mood-line", "spectrum",
-                                                                 "state", "model", "status")}
+                                                                 "state", "model", "status", "volume-meter")}
+        self._buttons = {b.id: b for b in self.query("#commands Button")}
+        # Textual ignores mouse and Enter presses while a button's active-effect
+        # class persists; transport commands must accept consecutive presses.
+        for name in ("previous", "play", "next", "panic"):
+            self._buttons[name].active_effect_duration = 0
+        self._root = self.screen
+        self._mood_input = self.query_one('#mood', Input)
+        self._footer = self.query_one(Footer)
+        self._commands = self.query_one('#commands')
+        self._panel = self.query_one('#panel')
+        self._metadata = self.query_one('#metadata')
+        self.apply_preferences(self.preferences)
         self.player.start()
         self._show_model()
         self._tick()
@@ -493,18 +532,39 @@ class StreamApp(App):
             self.exit(message="gentle-stream: the music was stopped")
             return
         now, p = self.player.now, self.player
-        w["title"].update(f"♪ {now.style.name}")
-        w["details"].update(now.style.summary())
-        w["mood-line"].update(f"“{now.style.mood}”" if now.style.mood else "")
+        w["title"].update(Text(f"♪ {now.style.name}"))
+        details = Text(now.style.summary())
+        mood = Text(f"“{now.style.mood}”" if now.style.mood else "")
+        w["details"].update(details)
+        w["details"].tooltip = details
+        w["mood-line"].update(mood)
+        w["mood-line"].tooltip = mood
         state = "[b $success]▶ Playing[/]" if p.playing else "[b $warning]⏸ Paused[/]"
-        w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1} · vol {round(p.volume * 100)}%")
+        audible_name, audible_index = getattr(now, "playlist_name", None), getattr(now, "playlist_index", None)
+        audible = f" · {escape(audible_name)} #{audible_index + 1}" if isinstance(audible_name, str) and isinstance(audible_index, int) else ""
+        w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1}{audible}")
+        meter = render_compact_volume_meter if self._root.has_class("compact") else render_volume_meter
+        w["volume-meter"].update(meter(round(p.volume * 100), self.preferences.accent))
+        self._buttons["play"].label = "⏸" if p.playing else "▶"
+        self._buttons["play"].set_class(not p.playing, "paused")
+        gap = ' ' * self.preferences.icon_gap
+        self._buttons["continuous"].label = f"↻{gap}{'on' if p.continuous is True else 'off'}"
 
     def _show_model(self) -> None:
         session = f" · session: {self.session_usage.format()}" if self.session_usage else ""
         self._w["model"].update(f"model: {escape(model_label(self.shell.model))}{session}")
+        self._w["model"].tooltip = Text(f"model: {model_label(self.shell.model)}{session}")
+        label = self.shell.model or "default"
+        short = label if len(label) <= 22 else label[:10] + "…" + label[-11:]
+        button_label = f"⚙{' ' * self.preferences.icon_gap}{short}"
+        button = self._buttons["model-command"]
+        button.label = Text(button_label)
+        button.styles.min_width = max(13, len(button_label) + 2)  # Include button padding; scroll if narrow.
+        button.tooltip = Text(f"Settings (F2) · direct model picker (m) · {model_label(self.shell.model)}")
 
     def _status(self, text: str) -> None:
         self._w["status"].update(text)
+        self._w["status"].tooltip = self._w["status"].render()
 
     def apply_preferences(self, preferences: Preferences, *, persist: bool = False) -> None:
         """The single UI-only apply path. Validate/save before changing any widget or timer."""
@@ -583,15 +643,28 @@ class StreamApp(App):
         self._control(self.player.toggle)
 
     def action_next(self) -> None:
-        self.player.next()
-        self._status("Next piece, same mood.")
+        if self._control(self.player.next):
+            self._status("Next playlist song." if self.player.continuous is True else "Next piece, same mood.")
+
+    def action_previous(self) -> None:
+        if self.player.playlist_index is None:
+            if self._selection is None:
+                self._status("Select a song in Playlist (p) before using Previous.")
+                return
+            styles, index, name = self._selection
+            action = lambda: self.player.previous(styles, start_index=index, name=name)
+        else:
+            action = self.player.previous
+        if self._control(action):
+            self._status("Previous playlist song.")
 
     def action_volume(self, percent: int) -> None:
         """Change the volume by whole percentage points, so repeated steps never drift."""
         self._control(lambda: self.player.set_volume((round(self.player.volume * 100) + percent) / 100))
 
     def action_focus_mood(self) -> None:
-        self.query_one("#mood", Input).focus()
+        self._mood_input.display = True
+        self._mood_input.focus()
 
     def action_leave_mood(self) -> None:
         self.set_focus(None)
@@ -683,7 +756,7 @@ class StreamApp(App):
             self._request(mood)
 
     def _request(self, mood: str) -> None:
-        self._status(f"Interpreting “{mood}” with {model_label(self.shell.model)}…")
+        self._status(f"Interpreting “{escape(mood)}” with {escape(model_label(self.shell.model))}…")
         self._interpret(mood)
 
     @work(thread=True, exclusive=True, group="interpret")
@@ -695,10 +768,29 @@ class StreamApp(App):
             if not worker.is_cancelled:
                 self.call_from_thread(self._status, f"[$error]Could not interpret the mood:[/] {escape(str(e))}")
             return
+        try:
+            with self.player.stage_style(style) as commit:
+                while not worker.is_cancelled:
+                    if self.call_from_thread(self._apply_interpretation, worker, style, usage, commit):
+                        break
+                    time.sleep(.01)  # retry a busy render without blocking input
+        except (ValueError, PlayerError, ConnectionError) as e:
+            if not worker.is_cancelled:
+                self.call_from_thread(self._status, f"[$error]Could not apply style:[/] {escape(str(e))}")
+
+    def _apply_interpretation(self, worker, style: Style, usage: Usage | None, commit) -> bool:
+        # UI actions (including Panic's cancellation) and application share one
+        # event-loop turn. A worker cannot pass a check then apply after Panic.
         if worker.is_cancelled:
-            return
-        self.player.set_style(style)
-        self.call_from_thread(self._interpreted, style, usage)
+            return True
+        try:
+            committed = commit()  # never waits for preparation or a render lock
+        except (ValueError, PlayerError, ConnectionError) as e:
+            self._status(f"[$error]Could not apply style:[/] {escape(str(e))}")
+            return True
+        if committed:
+            self._interpreted(style, usage)
+        return committed is not False
 
     def _interpreted(self, style: Style, usage: Usage | None) -> None:
         self._selection = None  # an ordinary mood exits playlist navigation as well as rotation

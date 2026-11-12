@@ -11,7 +11,8 @@ def test_help_lists_flags_and_controls(capsys):
     assert exit_info.value.code == 0
     for text in ("--model", "--mood", "--gentle-shell", "play / pause", "next piece", "describe a mood",
                  "save what is playing", "saved prompts", "presets.json", "the music keeps playing",
-                 "quit and stop the music", "ctl", "play|pause|toggle|next|stop|status"):
+                 "quit and stop the music", "ctl", "play|pause|toggle|next|stop|status",
+                 "underruns", "output_underflows", "buffered_seconds", "null with older players"):
         assert text in out
     assert "daemon" not in out                     # started automatically, never by hand
 
