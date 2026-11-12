@@ -109,16 +109,37 @@ class Player:
 
     # ------------------------------------------------------------ controls
     def play(self) -> None:
-        self.playing = True
+        with self._control_lock:
+            if self._restart_error:
+                raise ValueError(self._restart_error + "; use Panic to retry")
+            resume = getattr(self._stream, 'resume', None)
+            self.playing = True
+            if callable(resume):
+                try:
+                    resume()
+                except Exception:
+                    self.playing = False
+                    raise
 
     def pause(self) -> None:
-        self.playing = False
+        with self._control_lock:
+            pause = getattr(self._stream, 'pause', None)
+            if callable(pause):
+                # The transport stops callbacks and confirms the owned sink cut
+                # before success. Queue/position/playlist metadata stay intact.
+                pause()
+                self._gain = 0.0
+                self.level = 0.0
+                self._tail[:] = 0
+            self.playing = False
 
     def toggle(self) -> None:
-        self.playing = not self.playing
+        with self._control_lock:
+            self.pause() if self.playing else self.play()
 
     def set_volume(self, volume: float) -> None:
-        self.volume = float(np.clip(volume, 0, 1))
+        with self._control_lock:
+            self.volume = float(np.clip(volume, 0, 1))
 
     def set_style(self, style: Style) -> None:
         """The new style starts at the next rendered bar, after the audio already buffered."""
