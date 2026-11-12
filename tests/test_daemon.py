@@ -109,9 +109,68 @@ def runtime(monkeypatch):
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    proc.terminate()
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass  # The owned child may exit between wait and terminate.
                     proc.wait(timeout=5)
             # Retain owned runtime/log evidence; cleanup belongs to the orchestrator.
+
+
+@pytest.mark.parametrize("terminate_error", [None, ProcessLookupError, PermissionError, "exited"])
+def test_runtime_teardown_handles_only_already_exited_processes(monkeypatch, terminate_error):
+    from gentle_stream import client
+
+    root = Path("fixture-only-runtime")
+    events = []
+
+    class Player:
+        def close(self):
+            events.append("close")
+
+    class Child:
+        waits = 0
+
+        def wait(self, *, timeout):
+            assert timeout == 5
+            self.waits += 1
+            events.append("wait")
+            if self.waits == 1 and terminate_error != "exited":
+                raise subprocess.TimeoutExpired("owned fake daemon", timeout)
+            return 0
+
+        def terminate(self):
+            events.append("terminate")
+            if terminate_error is not None:
+                raise terminate_error("synthetic teardown error")
+
+    child, bystander = Child(), Child()
+    def spawn(argv, **kwargs):
+        events.append(tuple(argv))
+        return child if argv[1:4] == ["-m", "gentle_stream", "daemon"] else bystander
+
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **kwargs: str(root))
+    monkeypatch.setattr(client, "connect", lambda: Player())
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    # Fail closed if the fixture ever regresses to PID signaling or deletion.
+    monkeypatch.setattr(os, "kill", lambda *args: pytest.fail("unexpected PID signal"))
+    import shutil
+    monkeypatch.setattr(shutil, "rmtree", lambda *args, **kwargs: pytest.fail("unexpected deletion"))
+    fixture = runtime.__wrapped__(monkeypatch)
+    assert next(fixture) == root / "gentle-stream"
+    owned = [sys.executable, "-m", "gentle_stream", "daemon"]
+    unrelated = [sys.executable, "-m", "unrelated"]
+    assert subprocess.Popen(owned) is child
+    assert subprocess.Popen(unrelated) is bystander
+    with pytest.raises(PermissionError if terminate_error is PermissionError else StopIteration):
+        next(fixture)
+    tail = ["close", "wait"]
+    if terminate_error != "exited":
+        tail.append("terminate")
+        if terminate_error is not PermissionError:
+            tail.append("wait")
+    assert events == [tuple(owned), tuple(unrelated), *tail]
+    assert bystander.waits == 0
 
 
 def run_ctl(capsys, action):

@@ -76,7 +76,7 @@ def run_case(args, *, elapsed=100.0, mode="clean"):
                "-p", "no:cacheprovider", "-p", "pytest_asyncio.plugin", "-o",
                "markers=performance: render speed\nother: selection sentinel", *args]
     result = subprocess.run(command, cwd=directory, env=env, capture_output=True,
-                            text=True, timeout=30, executable=sys.executable)
+                            text=True, timeout=10, executable=sys.executable)
     (directory / "result.json").write_text(json.dumps({
         "command": command, "exit": result.returncode,
         "stdout": result.stdout, "stderr": result.stderr,
@@ -93,13 +93,13 @@ def assert_summary(result, exit_code, summary):
 
 
 def test_default_runs_functional_contract_without_clock_gate():
-    result = run_case(["test_genres_contract.py", "-k", "renders_cleanly and lofi and procedural"])
+    result = run_case(["test_genres_contract.py", "-k", "renders_cleanly and lofi and not trap and procedural"])
     assert_summary(result, 0, r"1 passed, \d+ deselected")
 
 
 @pytest.mark.parametrize("elapsed,exit_code,factor", [(0.5, 0, None), (0.8, 1, "10.0"), (1.0, 1, "8.0")])
 def test_explicit_performance_selection_keeps_strict_ten_x(elapsed, exit_code, factor):
-    result = run_case(["-m", "performance", "test_genres_contract.py", "-k", "lofi and procedural"], elapsed=elapsed)
+    result = run_case(["-m", "performance", "test_genres_contract.py", "-k", "lofi and not trap and procedural"], elapsed=elapsed)
     assert_summary(result, exit_code, rf"1 {'passed' if exit_code == 0 else 'failed'}, \d+ deselected")
     if factor:
         assert f"only {factor}x real time" in result.stdout
@@ -107,7 +107,7 @@ def test_explicit_performance_selection_keeps_strict_ten_x(elapsed, exit_code, f
 
 @pytest.mark.parametrize("mode", ["nonfinite", "clipped", "silent", "nondeterministic", "seam"])
 def test_default_still_rejects_broken_audio(mode):
-    result = run_case(["test_genres_contract.py", "-k", "renders_cleanly and lofi and procedural"], mode=mode)
+    result = run_case(["test_genres_contract.py", "-k", "renders_cleanly and lofi and not trap and procedural"], mode=mode)
     assert_summary(result, 1, r"1 failed, \d+ deselected")
 
 
