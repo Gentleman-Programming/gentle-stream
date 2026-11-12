@@ -147,8 +147,10 @@ def state(player, bands: int = 0) -> dict:
         "volume": float(player.volume),
         "level": float(player.level),
         "backend": player.engine.backend,
-        "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar},
-        "style": player.style.to_dict(),
+        "underruns": int(player.underruns),
+        "output_underflows": None if player.output_underflows is None else int(player.output_underflows),
+        "buffered_seconds": float(player.buffered_seconds),
+        **playback,
     }
     out['audio_output'] = getattr(player, 'audio_output', 'sounddevice')
     if out['audio_output'] == 'windows':
