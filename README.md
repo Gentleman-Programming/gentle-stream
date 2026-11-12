@@ -38,6 +38,12 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
 
+## Demo
+
+https://github.com/user-attachments/assets/60bed6fc-0c97-419e-8bc3-278c5a9967f0
+
+*2:35 · Spanish captions · Instrumental music · No voiceover.*
+
 ## Features
 
 ---
