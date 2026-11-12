@@ -55,3 +55,7 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "strict"
+addopts = "-m 'not performance'"
+markers = [
+    "performance: hardware-sensitive render throughput benchmarks (opt in with -m performance)",
+]
