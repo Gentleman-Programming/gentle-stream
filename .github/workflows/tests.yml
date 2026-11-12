@@ -1,0 +1,157 @@
+name: Tests
+
+"on":
+  pull_request:
+    branches: [main, feat/cross-platform-integration]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-native:
+    name: Python 3.13 / native Windows contracts
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source without stored credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          clean: false
+      - name: Install native uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.10"
+          enable-cache: false
+      - name: Run device-free native and portable contracts
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP ("gs-native-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force $scratch | Out-Null
+          $env:UV_PYTHON_INSTALL_DIR = "$scratch/python"
+          $env:UV_CACHE_DIR = "$scratch/uv-cache"
+          $env:UV_PROJECT_ENVIRONMENT = "$scratch/venv"
+          $env:TEMP = $env:TMP = "$scratch/temp"
+          $env:HOME = $env:USERPROFILE = "$scratch/home"
+          $env:XDG_CONFIG_HOME = "$scratch/config"
+          $env:XDG_CACHE_HOME = "$scratch/cache"
+          $env:XDG_RUNTIME_DIR = "$scratch/runtime"
+          $env:GENTLE_STREAM_TEST_TEMP = "$scratch/temp"
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          $env:PYTHONPATH = "src"
+          New-Item -ItemType Directory -Force $env:TEMP, $env:HOME, $env:XDG_CONFIG_HOME, $env:XDG_CACHE_HOME, $env:XDG_RUNTIME_DIR | Out-Null
+          uv sync --python 3.13 --frozen --no-install-project --no-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = "$scratch/venv/Scripts/python.exe"
+          & $python -c 'import sys; from importlib.metadata import version; assert sys.platform == "win32"; assert sys.version_info[:2] == (3, 13); print(sys.version); print({name: version(name) for name in ("sounddevice", "pyfluidsynth", "pytest")}); assert not any(name in sys.modules for name in ("sounddevice", "_sounddevice", "fluidsynth"))'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m gentle_stream --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m pytest -q tests/test_native_windows.py tests/test_daemon.py tests/test_bridge.py tests/test_voice_free_delivery.py tests/test_music_panic.py tests/test_ui_toolbar_contracts.py tests/test_ui_save_contracts.py tests/test_ui_picker_contracts.py tests/test_ui_transport_contracts.py tests/test_genres_contract.py tests/test_performance_selection.py -o "cache_dir=$scratch/pytest-cache" --basetemp="$scratch/pytest-temp"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Only this mocked host regression is portable; the real-pipe module is POSIX.
+          & $python -m pytest -q tests/test_pause_output.py::test_host_pause_delivers_stop_with_full_pending_queue -o "cache_dir=$scratch/pytest-cache" --basetemp="$scratch/queue-temp"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m pytest --collect-only -q -m performance tests/test_genres_contract.py -o "cache_dir=$scratch/pytest-cache"
+          exit $LASTEXITCODE
+
+  test:
+    name: Python 3.13 / ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-24.04
+            shell: bash
+          - platform: macOS
+            runner: macos-15
+            shell: bash
+          - platform: WSL
+            runner: windows-latest
+            shell: wsl-bash {0}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - name: Check out source without stored credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          clean: false
+      - name: Install Ubuntu in Windows Subsystem for Linux
+        if: matrix.platform == 'WSL'
+        uses: Vampire/setup-wsl@887f39deb6c0976365e546926fe66f41b77d65ff # v6
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: "2"
+          set-as-default: "true"
+          use-cache: "false"
+          update: "true"
+          additional-packages: libportaudio2 python3-venv ca-certificates
+      - name: Install Linux PortAudio library
+        if: matrix.platform == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libportaudio2
+      - name: Install macOS PortAudio library
+        if: matrix.platform == 'macOS'
+        run: brew install portaudio
+      - name: Install native uv
+        if: matrix.platform != 'WSL'
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.11.14"
+          enable-cache: false
+      - name: Install frozen dependencies and run correctness tests
+        run: |
+          platform='${{ matrix.platform }}'
+          # Short system-temp roots keep macOS AF_UNIX socket paths within limits.
+          scratch="$(mktemp -d /tmp/gs-ci-XXXXXX)"
+          export PYTHONDONTWRITEBYTECODE=1
+          export UV_PYTHON_PREFERENCE=only-managed
+          export HOME="$scratch/home"
+          export XDG_CONFIG_HOME="$scratch/config"
+          export XDG_CACHE_HOME="$scratch/cache"
+          export XDG_RUNTIME_DIR="$scratch/run"
+          export UV_CACHE_DIR="$scratch/uv-cache"
+          export UV_PYTHON_INSTALL_DIR="$scratch/python"
+          export UV_PROJECT_ENVIRONMENT="$scratch/venv"
+          export TMPDIR="$scratch/tmp"
+          export GENTLE_STREAM_TEST_TEMP="$scratch/tmp"
+          export PYTEST_ADDOPTS="-o cache_dir=$scratch/pytest-cache --basetemp=$scratch/pytest-temp"
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" "$TMPDIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          if [[ "$platform" == WSL ]]; then
+            # Move off DrvFS: sockets, executable fake scripts and mode bits need POSIX paths.
+            cp -R . "$scratch/repo"
+            cd "$scratch/repo"
+            test "$(uname -s)" = Linux
+            grep -qi microsoft /proc/sys/kernel/osrelease
+            . /etc/os-release
+            test "$ID:$VERSION_ID" = ubuntu:24.04
+            python3 -m venv "$scratch/bootstrap"
+            "$scratch/bootstrap/bin/python" -m pip install --only-binary=:all: uv==0.11.14
+            export PATH="$scratch/bootstrap/bin:$PATH"
+          fi
+          test "$(tr -d '\r\n' < .python-version)" = 3.13
+          uv --version
+          uv python install 3.13
+          uv sync --frozen --python 3.13
+          uv run --frozen --no-sync python -c 'import sys, sounddevice; assert sys.version_info[:2] == (3, 13); print(sys.version); print(sys.platform); print(sounddevice.get_portaudio_version())'
+          # Full default correctness includes the COMPLETE real-pipe pause module on Linux.
+          uv run --frozen --no-sync pytest
+          # Collection only: never infer real throughput from synthetic selection probes.
+          uv run --frozen --no-sync pytest --collect-only -q -m performance tests/test_genres_contract.py

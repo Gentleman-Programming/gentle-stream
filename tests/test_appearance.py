@@ -6,7 +6,7 @@ from textual.widgets import Input, Switch
 
 from gentle_stream.appearance import Preferences, PreferenceError, PreferenceStore
 from gentle_stream.appearance_ui import SettingsScreen
-from tests.test_named_playlist_ui import ui, shown  # noqa: F401
+from tests.test_ui_toolbar_contracts import ui, shown  # noqa: F401
 
 
 @pytest.mark.parametrize("key,value", [("refresh_hz", 4), ("refresh_hz", 31), ("bands", 7),
