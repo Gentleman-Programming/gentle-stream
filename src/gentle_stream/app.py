@@ -151,32 +151,76 @@ class SaveDialog(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
     DEFAULT_CSS = """
     SaveDialog { align: center middle; }
-    SaveDialog > Vertical { width: 60; height: auto; border: round $primary; padding: 0 1; background: $surface; }
-    SaveDialog .heading { color: $primary; text-style: bold; }
-    SaveDialog #save-status { color: $text-muted; }
+    SaveDialog > Vertical { width: 60; max-width: 100%; height: auto; max-height: 100%; overflow-y: auto;
+                            border: round $primary; padding: 1 2; background: $surface; }
+    SaveDialog .heading { color: $foreground; text-style: bold; margin-bottom: 1; }
+    SaveDialog .field-label { color: $accent; }
+    SaveDialog #save-submit { height: 1; min-height: 1; border: none; background: $primary;
+                             color: $background; text-style: bold; margin-top: 1; }
+    SaveDialog #save-submit:focus { text-style: bold; }
+    SaveDialog #save-playlist, SaveDialog #save-playlist-label { display: none; }
+    SaveDialog #save-status { color: $text-muted; margin-top: 1; }
     SaveDialog Input { border: round $panel; background: $surface; }
     SaveDialog Input:focus { border: round $primary; }
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, library: PlaylistLibrary | None = None,
+                 save: Callable[[str | None, str], None] | None = None):
         super().__init__()
-        self.initial = name
+        self.initial, self.save = name, save
+        self.groups = {f"group-{i}": p.name for i, p in enumerate(library.list())} if library else {}
+        self.error = library.error if library else None
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("Save what is playing", classes="heading")
-            yield Input(self.initial, placeholder="Name", max_length=NAME_MAX, id="save-name")
-            yield Static("Enter to save · Esc to cancel", id="save-status")
+            yield Static("Song name", id="save-name-label", classes="field-label")
+            yield Input(self.initial, placeholder="Song name", max_length=NAME_MAX, id="save-name")
+            yield Static("Destination", id="save-destination-label", classes="field-label")
+            yield Select([(Text("Saved prompts (legacy)"), "legacy"), (Text("New playlist…"), "new"),
+                          *[(Text(name), key) for key, name in self.groups.items()]],
+                         value="legacy", allow_blank=False, id="save-destination")
+            yield Static("Playlist name", id="save-playlist-label", classes="field-label")
+            yield Input(placeholder="New playlist name", max_length=NAME_MAX, id="save-playlist")
+            yield Button("Save (Enter)", id="save-submit")
+            yield Static(Text(self.error or "Enter opens · ↑↓ choose · Enter selects · Enter again saves · Esc cancels"),
+                         id="save-status")
 
     def on_mount(self) -> None:
-        self.query_one(Input).focus()
+        self.query_one("#save-name", Input).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        is_new = event.value == "new"
+        playlist_name = self.query_one("#save-playlist", Input)
+        playlist_name.display = is_new
+        self.query_one("#save-playlist-label", Static).display = is_new
+        if is_new:
+            playlist_name.focus()
+        elif event.value in self.groups:
+            # After choosing an existing group, Enter should use the dialog's
+            # Save action rather than reopening the focused Select dropdown.
+            self.query_one("#save-submit", Button).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()  # otherwise it bubbles to the app and is taken as a mood
+        self._save()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._save()
+
+    def _save(self) -> None:
         try:
-            self.dismiss(normalize_name(event.value))
+            name = normalize_name(self.query_one("#save-name", Input).value)
+            destination = self.query_one("#save-destination", Select).value
+            group = (normalize_name(self.query_one("#save-playlist", Input).value) if destination == "new"
+                     else self.groups.get(destination))
+            if self.save:
+                self.save(group, name)
+            self.dismiss(name)
         except PresetError as e:
-            self.query_one("#save-status", Static).update(f"[$error]{escape(str(e))}[/]")
+            self.query_one("#save-status", Static).update(Text(f"Could not save: {e}"))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -459,17 +503,22 @@ class StreamApp(App):
     def action_save_preset(self) -> None:
         style = self.player.now.style  # what is audible, captured before the dialog opens
 
-        def named(name: str | None) -> None:
-            if name is None:
-                return
-            try:
-                preset, replaced = self.presets.save(name, style)
-            except PresetError as e:
-                self._status(f"[$error]Could not save:[/] {escape(str(e))}")
-                return
+        def save(group: str | None, name: str) -> None:
+            preset, replaced = (self.presets.save(name, style) if group is None
+                                else self.library.save(group, name, style))
             self._status(f"{'Replaced' if replaced else 'Saved'} “{escape(preset.name)}”")
 
-        self.push_screen(SaveDialog(style.name), named)
+        self.push_screen(SaveDialog(style.name, self.library, save))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        actions = {"playlist": self.action_pick_preset, "play": self.action_toggle,
+                   "next": self.action_next, "previous": self.action_previous, "panic": self.action_panic,
+                   "mood-command": self.action_focus_mood,
+                   "model-command": self.action_settings, "save-command": self.action_save_preset,
+                   "playlist-command": self.action_pick_preset, "continuous": self.action_continuous,
+                   "quieter": lambda: self.action_volume(-5), "louder": lambda: self.action_volume(5)}
+        if action := actions.get(event.button.id):
+            action()
 
     def action_pick_preset(self) -> None:
         def chosen(preset: Preset | None) -> None:
