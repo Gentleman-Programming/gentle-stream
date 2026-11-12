@@ -98,7 +98,12 @@ def main(argv=None):
         try:
             pending.put_nowait(None)
         except queue.Full:
-            pass
+            # Cancellation discards PCM; reserve space for the writer's stop signal.
+            try:
+                pending.get_nowait()
+            except queue.Empty:  # The writer may already have drained the queue.
+                pass
+            pending.put_nowait(None)
         writer.join(timeout=1)
         if writer.is_alive():
             raise OSError('native audio writer did not stop')

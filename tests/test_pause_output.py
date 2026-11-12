@@ -84,6 +84,124 @@ event('eof')
         p.close()
 
 
+def test_host_pause_delivers_stop_with_full_pending_queue(monkeypatch):
+    import io
+    import queue
+    import runpy
+    from types import SimpleNamespace
+
+    host = runpy.run_path(str(Path(__file__).parents[1] /
+                              'src/gentle_stream/_windows_output_host.py'))
+    release = threading.Event()
+    gated = threading.Event()
+    queues, children, writers, effects = [], [], [], []
+
+    class Pending(queue.Queue):
+        def __init__(self, maxsize):
+            super().__init__(maxsize)
+            self.first = not queues
+            queues.append(self)
+
+        def get(self, *args, **kwargs):
+            if self.first and not gated.is_set():
+                gated.set()
+                assert release.wait(2), 'stop insertion never released the writer'
+            return super().get(*args, **kwargs)
+
+        def put_nowait(self, item):
+            try:
+                return super().put_nowait(item)
+            finally:
+                if self.first and item is None:
+                    effects.append('stop attempted')
+                    release.set()
+
+    class Pipe:
+        def __init__(self, child):
+            self.child = child
+            self.data = bytearray()
+            self.closed = False
+
+        def write(self, data):
+            self.data.extend(data)
+            return len(data)
+
+        def close(self):
+            self.closed = True
+            if self.child.code is None:
+                self.child.code = 0
+
+    class Child:
+        def __init__(self, argv, **kwargs):
+            assert argv[0] == 'fake-ffplay' and argv[-1] == 'pipe:0'
+            self.code = None
+            self.stdin = Pipe(self)
+            children.append(self)
+
+        def poll(self):
+            return self.code
+
+        def terminate(self):
+            effects.append('terminate')
+            self.code = -15
+
+        def kill(self):
+            pytest.fail('fake child should terminate without kill')
+
+        def wait(self, timeout):
+            assert timeout == 1
+            if len(children) == 1:
+                assert gated.wait(2)
+                assert queues[0].full(), 'pause cleanup must encounter four queued frames'
+                assert not release.is_set(), 'writer resumed before full-queue cleanup'
+            effects.append(('wait', self.code))
+            return self.code
+
+    def thread(**kwargs):
+        writer = threading.Thread(**kwargs)
+        writers.append(writer)
+        return writer
+
+    def frame(op, sequence, data=b''):
+        return host['HEADER'].pack(op, sequence, len(data)) + data
+
+    pcm = bytes(range(8))
+    frames = b''.join(frame(b'D', n, pcm) for n in range(1, 5))
+    frames += frame(b'P', 5) + frame(b'R', 6)
+    frames += frame(b'D', 7, pcm) + frame(b'D', 8, pcm)
+    output, errors = io.BytesIO(), io.StringIO()
+    globals_ = host['main'].__globals__
+    monkeypatch.setitem(globals_, 'sys', SimpleNamespace(
+        stdin=SimpleNamespace(buffer=io.BytesIO(frames)),
+        stdout=SimpleNamespace(buffer=output), stderr=errors))
+    monkeypatch.setitem(globals_, 'subprocess', SimpleNamespace(
+        Popen=Child, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL,
+        TimeoutExpired=subprocess.TimeoutExpired))
+    monkeypatch.setitem(globals_, 'queue', SimpleNamespace(
+        Queue=Pending, Full=queue.Full, Empty=queue.Empty))
+    monkeypatch.setitem(globals_, 'threading', SimpleNamespace(
+        Thread=thread, Event=threading.Event, Lock=threading.Lock))
+    try:
+        result = host['main'](['fake-ffplay', '44100'])
+    finally:
+        release.set()
+        for work, writer in zip(queues, writers):
+            if writer.is_alive():
+                work.put_nowait(None)
+                writer.join(timeout=2)
+        assert all(not writer.is_alive() for writer in writers)
+    assert result == 0, errors.getvalue()
+    assert errors.getvalue() == ''
+    assert output.getvalue() == b''.join(host['ACK'].pack(op, n) for op, n in
+                                       [(b'P', 5), (b'R', 6), (b'D', 7), (b'D', 8)])
+    assert len(children) == 2
+    assert children[0].stdin.data == b''
+    assert children[1].stdin.data == pcm * 2
+    assert all(child.stdin.closed for child in children)
+    assert effects == ['terminate', ('wait', -15), 'stop attempted',
+                       'stop attempted', ('wait', 0)]
+
+
 def test_pause_ack_stops_owned_queued_sink_and_resume_retains_music(owned_output):
     p, stream, events, root = owned_output
     started = time.monotonic()
