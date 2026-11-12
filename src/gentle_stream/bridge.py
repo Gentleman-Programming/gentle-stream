@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
 import subprocess
 import threading
 from dataclasses import dataclass, field
 
 from .genres import NAMES as GENRE_NAMES, REGISTRY
 from .style import CHORD_INSTRUMENTS, DRUMS, KEYS, LEAD_INSTRUMENTS, MODES, Style
+from . import processes
 
 QUIET_FLAGS = ("--no-session", "-nt", "-ns", "-np", "-nc", "--no-mcp", "--no-themes", "--no-skill-registry")
 # Explicit dembow/reggaeton words route locally; keep the AI prompt identical for every existing mood.
@@ -165,10 +165,14 @@ class GentleShell:
     def _run(self, args: list[str]) -> str:
         try:
             # own process group: gentle-shell is a launcher that spawns pi, and cancel() must stop both
-            proc = subprocess.Popen([self.binary, "--", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    stdin=subprocess.DEVNULL, text=True, start_new_session=True)
+            proc = processes.spawn([self.binary, "--", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   stdin=subprocess.DEVNULL, text=True)
         except FileNotFoundError:
             raise InterpretError(f"{self.binary} not found: install Gentle Shell or pass --gentle-shell") from None
+        except OSError as e:
+            if os.name != "nt":
+                raise
+            raise InterpretError(str(e)) from e
         with self._procs_lock:
             self._procs.add(proc)
         try:
@@ -182,6 +186,7 @@ class GentleShell:
                 self._procs.discard(proc)
                 cancelled = proc in self._cancelled
                 self._cancelled.discard(proc)
+                processes.release(proc)
         if cancelled:
             raise InterpretError("cancelled")
         if proc.returncode != 0:
@@ -191,10 +196,7 @@ class GentleShell:
 
     @staticmethod
     def _kill(proc: subprocess.Popen) -> None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        processes.kill_tree(proc)
 
     def cancel(self) -> None:
         """Stop every running gentle-shell call; each one raises InterpretError("cancelled")."""

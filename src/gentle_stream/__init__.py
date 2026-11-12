@@ -85,6 +85,12 @@ def ctl(action: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles use UTF-8, but redirected Python output otherwise uses
+    # the legacy ANSI code page, which cannot represent the documented controls.
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["daemon"]:   # the background player, started by the TUI; not listed in --help
         from .daemon import main as daemon_main

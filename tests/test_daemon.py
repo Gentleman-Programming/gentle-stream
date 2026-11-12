@@ -5,7 +5,6 @@ a fake audio stream, and stops or kills them afterwards. The user's real runtime
 """
 import json
 import os
-import shutil
 import signal
 import socket
 import stat
@@ -47,15 +46,16 @@ class FakeAudio:
     def stop(self):
         self._stop.set()
 
+    abort = stop  # Fake output has no downstream queue to drain.
+
     def close(self):
         if self._thread.is_alive():
             self._thread.join(timeout=2)
 
 
 def no_device(**kw):
-    import sounddevice as sd
-
-    raise sd.PortAudioError("Error querying device -1")
+    # Exercise startup-error transport without importing/probing a native audio host.
+    raise OSError("Error querying device -1")
 
 
 def wait_for(cond, timeout=10.0):
@@ -67,11 +67,8 @@ def wait_for(cond, timeout=10.0):
 
 
 def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+    from gentle_stream.processes import is_alive
+    return is_alive(pid)
 
 
 def daemon_pids(run):
@@ -83,27 +80,38 @@ def daemon_pids(run):
 @pytest.fixture
 def runtime(monkeypatch):
     """A private runtime dir for the daemons of one test; any daemon left behind is stopped, then killed."""
-    root = Path(tempfile.mkdtemp(prefix="gs-", dir="/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="gs-", dir=os.environ.get("GENTLE_STREAM_TEST_TEMP", "/tmp")))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(root))
     monkeypatch.setenv("XDG_CACHE_HOME", str(root / "cache"))     # no soundfont: fast procedural instruments
-    monkeypatch.setenv("PYTHONPATH", REPO)                          # the daemon imports FakeAudio from here
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join((str(Path(REPO) / "src"), REPO)))                          # the daemon imports FakeAudio from here
     monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:FakeAudio")
     run = root / "gentle-stream"
+    from gentle_stream import client
+    children = []
+    original = subprocess.Popen
+    def spawn(argv, **kwargs):
+        proc = original(argv, **kwargs)
+        if isinstance(argv, list) and argv[1:4] == ["-m", "gentle_stream", "daemon"]:
+            children.append(proc)
+        return proc
+    monkeypatch.setattr(subprocess, "Popen", spawn)
     try:
         yield run
     finally:
         from gentle_stream import client
 
-        pids = daemon_pids(run)
         try:
             client.connect().close()
         except (client.NoPlayer, client.PlayerError):
             pass
         finally:
-            for pid in pids:
-                if alive(pid):
-                    os.kill(pid, signal.SIGKILL)
-            shutil.rmtree(root, ignore_errors=True)
+            for proc in children:
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+            # Retain owned runtime/log evidence; cleanup belongs to the orchestrator.
 
 
 def run_ctl(capsys, action):
@@ -129,6 +137,7 @@ def test_the_first_client_starts_the_player_and_the_next_one_attaches(runtime):
     assert client.connect().pid == pid             # detaching leaves it running
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits and Unix socket; native ACL covered separately")
 def test_the_runtime_dir_and_the_authkey_are_private(runtime):
     from gentle_stream import client
 
@@ -145,7 +154,8 @@ def test_a_wrong_authkey_is_refused(runtime):
 
     client.ensure().detach()
     with pytest.raises((AuthenticationError, EOFError, OSError)):
-        Client(str(runtime / "player.sock"), family="AF_UNIX", authkey=b"not the key")
+        from gentle_stream import daemon, platform_runtime
+        Client(platform_runtime.address(daemon.Paths(runtime)), family=platform_runtime.FAMILY, authkey=b"not the key")
     assert client.connect().playing                # the player survives the attempt
 
 
@@ -159,6 +169,7 @@ def test_only_one_player_runs_per_user(runtime):
     assert client.connect().pid == pid             # the running player kept its socket
 
 
+@pytest.mark.skipif(os.name == "nt", reason="SIGKILL leaves a POSIX socket inode")
 def test_a_crashed_player_is_detected_and_replaced(runtime, capsys):
     from gentle_stream import client
 
@@ -171,6 +182,7 @@ def test_a_crashed_player_is_detected_and_replaced(runtime, capsys):
     assert fresh.pid != pid and fresh.playing
 
 
+@pytest.mark.skipif(os.name == "nt", reason="AF_UNIX inode recovery; native lock recovery covered separately")
 def test_a_stale_socket_file_is_replaced(runtime):
     from gentle_stream import client
 
@@ -195,6 +207,7 @@ def test_stop_ends_the_player_process(runtime):
         client.connect()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows SIGTERM is TerminateProcess, not a catchable signal")
 def test_sigterm_ends_the_player_cleanly(runtime):
     from gentle_stream import client
 
@@ -292,6 +305,10 @@ def test_playlist_snapshot_survives_detach_and_reconnect(runtime):
     attached.set_style(Style(name="Normal mood"))
     assert attached.playlist_name is None and not attached.continuous
     attached.detach()
+
+
+
+
 # ------------------------------------------------------------ ctl
 @pytest.mark.parametrize("action", ["play", "pause", "toggle", "next", "stop"])
 def test_ctl_without_a_player_says_nothing_is_playing(runtime, capsys, action):
