@@ -12,9 +12,25 @@ CONTROLS = """controls:
            keeps musical settings, playlist, pause and volume; no AI call. A hard cut may click.
            recovery does not guarantee to fix stutter; reopen failures are shown, not Playing.
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
-  m        choose the model Gentle Shell uses
-  s        save what is playing under a name (prompt and style)
-  p        saved prompts: Enter applies one instantly, d deletes it
+  F2       Settings: live appearance, visibility, and explicit mood model selection
+           always available, even with hidden controls/input/footer; also in the command palette
+  m        choose the model Gentle Shell uses directly
+  s        save what is playing: Saved prompts, new playlist, or existing playlist
+  p        Playlist (also clickable): My playlist / Default playlist
+           My playlist opens groups, then songs in the same panel; Backspace goes back
+           Left/Right switch playlists; Up/Down highlight entries
+           click or Enter applies; d deletes only saved songs; Esc closes
+  c        continuous playlist from the selected song; toggle off without restarting audio
+           picker: c or Repeat from selection starts the full list at the highlighted song
+  command strip: Panic/save/repeat/mood/playlists left; previous/play-pause/next centered;
+                 chosen model and volume right. Tab focuses buttons; side groups scroll independently.
+  ⏮ button: previous playlist song (wraps), repeat on or off; preserves pause and volume.
+            Select a song in Playlist first. No new key; this does not restart the current song.
+  gear opens Settings and shows the chosen model (or honest Gentle Shell default).
+  Settings: Preview is temporary; Save persists; Defaults previews defaults; Cancel restores last save.
+  UI-only preferences live in appearance.json; visualizer changes never change audio parameters.
+  / temporarily reveals hidden mood input without saving visibility. Fonts belong to the terminal.
+  See docs/appearance.md for settings ranges and storage recovery.
   + / -    volume up / down by 5%
   ↑ / ↓    volume up / down by 1%
   b        back: leave the app, the music keeps playing

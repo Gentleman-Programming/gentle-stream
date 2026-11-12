@@ -10,7 +10,7 @@ be saved under a name and applied later, instantly, without asking Gentle Shell 
 from __future__ import annotations
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.markup import escape
@@ -21,6 +21,9 @@ from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
+from .appearance import Preferences, PreferenceStore
+from .appearance_ui import SettingsScreen
+from .visualizer import Spectrum
 from .bridge import GentleShell, InterpretError, Usage
 from .player import Player
 from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
@@ -268,6 +271,7 @@ class StreamApp(App):
     #mood:focus { border: round $primary; }
     """
     BINDINGS = [
+        Binding("f2", "settings", "Settings", priority=True),
         Binding("f4", "panic", "Panic restart", priority=True),
         Binding("space", "toggle", "Play/Pause"),
         Binding("n", "next", "Next"),
@@ -285,10 +289,13 @@ class StreamApp(App):
     ]
 
     def __init__(self, player: Player, shell: GentleShell, initial_mood: str | None = None,
-                 presets: PresetStore | None = None):
+                 presets: PresetStore | None = None, preference_store: PreferenceStore | None = None):
         super().__init__()
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
         self.presets = presets if presets is not None else PresetStore()
+        self.preference_store = preference_store if preference_store is not None else PreferenceStore()
+        self.preferences = self.preference_store.load()
+        self._ui_timer = None
         self.session_usage: Usage | None = None  # tokens and cost of every successful interpretation so far
         self._keep_playing = False                # `b` leaves the music playing, `q` stops it
         self.register_theme(GENTLEMAN_THEME)
@@ -315,9 +322,12 @@ class StreamApp(App):
         self.player.start()
         self._show_model()
         self._tick()
-        self.set_interval(1 / 15, self._tick)
         if self.initial_mood:
             self._request(self.initial_mood)
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self.screen_stack:
+            self.screen_stack[0].set_class(self.preferences.compact or event.size.height <= 24, "compact")
 
     def on_unmount(self) -> None:
         self.shell.cancel()  # a running gentle-shell would otherwise keep the process alive after quit
@@ -347,6 +357,58 @@ class StreamApp(App):
 
     def _status(self, text: str) -> None:
         self._w["status"].update(text)
+
+    def apply_preferences(self, preferences: Preferences, *, persist: bool = False) -> None:
+        """The single UI-only apply path. Validate/save before changing any widget or timer."""
+        preferences.validate()
+        if persist:
+            self.preference_store.save(preferences)
+        self.preferences = preferences
+        if not hasattr(self, '_root'):
+            return
+        p = preferences
+        background = {'black': '#000000', 'charcoal': '#202020'}.get(p.theme, p.background)
+        # Textual 8.2.8 doesn't invalidate CSS when the assigned theme name is unchanged.
+        # Alternate two registered names, bounding the registry while forcing live refresh.
+        theme_name = 'appearance-b' if self.theme == 'appearance-a' else 'appearance-a'
+        theme = Theme(name=theme_name, primary=p.accent, secondary='#f095c8', accent=p.accent,
+                      foreground='#f6eff3', background=background, surface=background,
+                      panel='#342230', success='#b4e7c7', warning='#f2b86d', error='#ff718f', dark=True)
+        if p == Preferences():
+            self.theme = GENTLEMAN_THEME.name
+        else:
+            self.register_theme(theme)
+            self.theme = theme.name
+        self._root.set_class(p.compact or self.size.height <= 24, 'compact')
+        # Keep the user-selected accent exact; Textual's theme-derived $primary may
+        # differ by one channel after its internal palette conversion.
+        self._w['title'].styles.color = p.accent
+        self._metadata.display = p.show_details
+        for name in ('details', 'mood-line'):
+            self._w[name].display = p.show_details
+        self._w['model'].display = p.show_model
+        spectrum = self._w['spectrum']
+        spectrum.configure(p)
+        spectrum.styles.min_height = p.height
+        spectrum.display = p.show_visualizer
+        self._panel.styles.height = '1fr' if p.show_visualizer else 'auto'
+        self._commands.display = p.show_controls
+        self._mood_input.display = p.show_input
+        self._footer.display = p.show_footer
+        if self._ui_timer is not None:
+            self._ui_timer.stop()
+        self._ui_timer = self.set_interval(1 / p.refresh_hz, self._tick)
+        self._show_model()
+
+    def action_settings(self) -> None:
+        if not isinstance(self.screen, SettingsScreen):
+            self.push_screen(SettingsScreen(self))
+
+    def get_system_commands(self, screen):
+        from textual.app import SystemCommand
+        yield from super().get_system_commands(screen)
+        yield SystemCommand('Settings', 'Appearance and mood model (F2)', self.action_settings)
+        yield SystemCommand('Panic restart', 'Hard cut and restart current track, no AI (F4)', self.action_panic)
 
     # ------------------------------------------------------------ actions
     def action_back(self) -> None:
