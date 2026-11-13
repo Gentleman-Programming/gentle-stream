@@ -11,11 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from gentle_stream import _windows_output_host as host, daemon
 from gentle_stream.player import Player
 from gentle_stream.style import Style
 from gentle_stream.windows_audio import WindowsPCMStream
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="WSL-host POSIX pipe/shebang interop tests require a POSIX runtime")
 
 
 class SyntheticEngine:

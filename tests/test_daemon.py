@@ -80,7 +80,7 @@ def daemon_pids(run):
 @pytest.fixture
 def runtime(monkeypatch):
     """A private runtime dir for the daemons of one test; any daemon left behind is stopped, then killed."""
-    root = Path(tempfile.mkdtemp(prefix="gs-", dir=os.environ.get("GENTLE_STREAM_TEST_TEMP", "/tmp")))
+    root = Path(tempfile.mkdtemp(prefix="gs-", dir=os.environ.get("GENTLE_STREAM_TEST_TEMP") or tempfile.gettempdir()))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(root))
     monkeypatch.setenv("XDG_CACHE_HOME", str(root / "cache"))     # no soundfont: fast procedural instruments
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join((str(Path(REPO) / "src"), REPO)))                          # the daemon imports FakeAudio from here
@@ -171,6 +171,59 @@ def test_runtime_teardown_handles_only_already_exited_processes(monkeypatch, ter
             tail.append("wait")
     assert events == [tuple(owned), tuple(unrelated), *tail]
     assert bystander.waits == 0
+
+
+def test_runtime_temp_dir_honors_environment_or_falls_back_to_tempdir(monkeypatch):
+    from gentle_stream import client
+
+    calls = []
+
+    def fake_mkdtemp(prefix, dir):
+        calls.append((prefix, dir))
+        return f"/mocked/{prefix}{len(calls)}"
+
+    class DummyPlayer:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(client, "connect", lambda: DummyPlayer())
+
+    # 1. Unset GENTLE_STREAM_TEST_TEMP -> falls back to tempfile.gettempdir()
+    monkeypatch.delenv("GENTLE_STREAM_TEST_TEMP", raising=False)
+    fixture1 = runtime.__wrapped__(monkeypatch)
+    run1 = next(fixture1)
+    assert run1 == Path("/mocked/gs-1/gentle-stream")
+    assert calls[-1] == ("gs-", tempfile.gettempdir())
+    assert os.environ["XDG_RUNTIME_DIR"] == str(Path("/mocked/gs-1"))
+    try:
+        next(fixture1)
+    except StopIteration:
+        pass
+
+    # 2. Empty GENTLE_STREAM_TEST_TEMP -> falls back to tempfile.gettempdir()
+    monkeypatch.setenv("GENTLE_STREAM_TEST_TEMP", "")
+    fixture2 = runtime.__wrapped__(monkeypatch)
+    run2 = next(fixture2)
+    assert run2 == Path("/mocked/gs-2/gentle-stream")
+    assert calls[-1] == ("gs-", tempfile.gettempdir())
+    try:
+        next(fixture2)
+    except StopIteration:
+        pass
+
+    # 3. Explicit GENTLE_STREAM_TEST_TEMP -> honors GENTLE_STREAM_TEST_TEMP
+    custom_temp = "/custom/gs/temp"
+    monkeypatch.setenv("GENTLE_STREAM_TEST_TEMP", custom_temp)
+    fixture3 = runtime.__wrapped__(monkeypatch)
+    run3 = next(fixture3)
+    assert run3 == Path("/mocked/gs-3/gentle-stream")
+    assert calls[-1] == ("gs-", custom_temp)
+    assert os.environ["XDG_RUNTIME_DIR"] == str(Path("/mocked/gs-3"))
+    try:
+        next(fixture3)
+    except StopIteration:
+        pass
 
 
 def run_ctl(capsys, action):
