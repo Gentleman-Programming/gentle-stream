@@ -112,6 +112,13 @@ def run_ctl(capsys, action):
     return code, out, err
 
 
+def run_ctl_json(capsys, argv):
+    """Run `gentle-stream ctl <argv> --json` and return (exit code, stdout, stderr)."""
+    code = main(["ctl", *argv, "--json"])
+    out, err = capsys.readouterr()
+    return code, out, err
+
+
 # ------------------------------------------------------------ lifecycle
 def test_the_first_client_starts_the_player_and_the_next_one_attaches(runtime):
     from gentle_stream import client
@@ -302,3 +309,87 @@ def test_ctl_controls_a_running_player(runtime, capsys):
     assert run_ctl(capsys, "stop") == (0, "", "")
     assert not alive(pid) or wait_for(lambda: not alive(pid)) is None
     assert run_ctl(capsys, "status") == (0, '{"running": false}\n', "")
+
+
+# ------------------------------------------------------------ ctl --json machine interface
+def test_ctl_json_status_and_volume_against_a_running_player(runtime, capsys):
+    from gentle_stream import client
+
+    player = client.ensure()
+    code, out, err = run_ctl_json(capsys, ["status"])
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["running"] is True and data["playing"] is True
+    assert 0 <= data["volume"] <= 100
+
+    code, out, err = run_ctl_json(capsys, ["volume", "40"])
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["volume"] == 40
+    checker = client.connect()
+    assert checker.volume == pytest.approx(0.4)   # the real player moved, not an assumed value
+    checker.detach()
+    player.close()
+
+
+def test_ctl_json_volume_rejects_out_of_range_without_changing_the_player(runtime, capsys):
+    from gentle_stream import client
+
+    player = client.ensure()
+    before = player.volume
+    code, out, err = run_ctl_json(capsys, ["volume", "101"])
+    assert code == 1
+    assert json.loads(out)["error"]["code"] == "invalid_request"
+    checker = client.connect()
+    assert checker.volume == before
+    checker.detach()
+    player.close()
+
+
+def test_ctl_json_mood_queues_the_style(runtime, capsys, monkeypatch):
+    from gentle_stream import client
+
+    class FakeShell:
+        def __init__(self, binary=None, model=None):
+            self.calls = []
+
+        def interpret(self, mood, current):
+            self.calls.append((mood, current))
+            return Style.from_dict({"name": "Summer Storm", "genre": "jazz", "mood": mood}, current)
+
+    shell = FakeShell()
+    monkeypatch.setattr("gentle_stream.bridge.GentleShell", lambda binary=None, model=None: shell)
+
+    player = client.ensure()
+    code, out, err = run_ctl_json(capsys, ["mood", "storm"])
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["mood"] == "storm"
+    assert data["name"] == "Summer Storm" and data["genre"] == "jazz"
+    assert shell.calls[0][0] == "storm"
+
+    watcher = client.connect()
+    wait_for(lambda: watcher.spectrum(8) is not None and watcher.style.name == "Summer Storm", timeout=20)
+    assert watcher.style.mood == "storm"
+    watcher.detach()
+    player.close()
+
+
+def test_ctl_json_start_attaches_or_starts_the_player(runtime, capsys):
+    from gentle_stream import client
+
+    code, out, err = run_ctl_json(capsys, ["start"])   # nothing playing: start one (fake audio, no model call)
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["running"] is True and data["playing"] is True
+    assert 0 <= data["volume"] <= 100
+    pid = client.connect().pid
+
+    code, out, err = run_ctl_json(capsys, ["start"])   # already playing: attach to the same player
+    assert code == 0 and err == ""
+    data = json.loads(out)
+    assert data["ok"] is True and data["running"] is True
+    checker = client.connect()
+    assert checker.pid == pid                        # no second player
+    checker.close()
+    wait_for(lambda: not alive(pid))

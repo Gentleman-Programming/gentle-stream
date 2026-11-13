@@ -175,7 +175,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 | `--mood TEXT` | Mood to interpret as soon as the app starts |
 | `--gentle-shell PATH` | `gentle-shell` executable to run (default: `gentle-shell`) |
 | `setup-samples` | Subcommand: download the FluidR3_GM soundfont once (see below) |
-| `ctl ACTION` | Subcommand: control the music playing in the background (see below) |
+| `ctl ACTION` | Subcommand: control the music playing in the background (see Background playback) |
 
 <div align="right"><a href="#top">Back to top</a></div>
 
@@ -187,14 +187,57 @@ The music plays in a background player, one per user, that `gentle-stream` start
 
 ```bash
 gentle-stream ctl status   # {"running": true, "playing": true, "name": "Midnight Rain", "genre": "lofi", "mood": ""}
+gentle-stream ctl start    # start or attach to the music (may open the audio device, never calls a model)
 gentle-stream ctl pause    # also: play, toggle, next
 gentle-stream ctl stop     # ends the background player
+gentle-stream ctl volume 60 --json
+gentle-stream ctl mood "rainy night in a small café" --json
 ```
+
+### Legacy text output (backward compatible)
 
 | Command | Output | Exit code |
 | :--- | :--- | :--- |
 | `ctl status` | One JSON line; just `{"running": false}` when nothing plays | `0` |
+| `ctl start` | One JSON line like `ctl status`; starts or attaches to the player | `0`, or `1` when it cannot start |
 | `ctl play`, `pause`, `toggle`, `next`, `stop` | Nothing, or `gentle-stream: nothing is playing` on stderr | `0`, or `1` when nothing plays |
+
+`ctl volume 60` and `ctl mood "text"` without `--json` also print nothing on success, and the usual `gentle-stream: …` error on stderr when they fail.
+
+### Machine interface (`--json`)
+
+Add `--json` to any `ctl` command and it prints one stable envelope per call on stdout — the interface Gentle Desktop consumes:
+
+| Command | Meaning |
+| :--- | :--- |
+| `ctl status --json` | Current snapshot |
+| `ctl start --json` | Start or attach to the player, then the snapshot |
+| `ctl play` · `pause` · `toggle` · `next --json` | The action, then the resulting snapshot |
+| `ctl volume N --json` | Set the volume to `N`, a whole percent `0`–`100` |
+| `ctl mood "text" --json` | Interpret `text` into a style and queue it |
+| `ctl stop --json` | Stop the music and end the player |
+
+**Success** prints one line whose shape is the snapshot plus `ok`:
+
+```json
+{"ok": true, "running": true, "playing": true, "volume": 60, "name": "Café Night", "genre": "jazz", "mood": "rainy night in a small café"}
+```
+
+Fields, in order: `ok` (always `true` on success), `running`, `playing`, `volume` (whole percent 0–100), then `name`/`genre`/`mood` when a player is running. `ctl status --json` with no player returns just `{"ok": true, "running": false}` (exit `0`). `ctl start --json` behaves like `ctl status --json` but starts or attaches first, so on success `running` is `true`. `ctl stop --json` returns `{"ok": true, "running": false}` when it stopped a player, and the `nothing_playing` failure below (exit `1`) when there was none. `name`/`genre`/`mood` report the current parameters — the style being rendered; for `mood` they are the style that was just queued, which becomes audible at the next bar. Every action response is the actual resulting snapshot, never an assumed success.
+
+**Failure** exits non-zero and prints one safe envelope:
+
+```json
+{"ok": false, "error": {"code": "nothing_playing", "message": "nothing is playing"}}
+```
+
+The error codes are `nothing_playing`, `invalid_request` and `unavailable`; messages are fixed text with no keys, socket paths, tokens or tracebacks.
+
+**Volume** is a whole percentage `0`–`100` (mapped to the player's 0.0–1.0 gain). Non-numeric, out-of-range or extra arguments are rejected as `invalid_request` before the player is ever contacted.
+
+**Mood** takes the rest of the line as text (spaces and Unicode preserved); it must be non-empty and at most 200 characters. It is synchronous: `ctl mood` waits for Gentle Shell to interpret the text with the chosen model (one model call — the only thing that spends tokens — using the same interpretation as the TUI's mood prompt), then queues the resulting style at the next bar. The response reflects the queued style immediately, before it is audible. A failed interpretation returns `unavailable` and leaves the music untouched.
+
+**Start** starts the background player when none is running, or attaches to the one already playing, through the same owner the TUI uses (`client.ensure`). It may open the audio device, but it makes **no model call** — mood interpretation stays a separate `ctl mood` call. If the player cannot be started (for example, the audio output cannot be opened), it exits `1` with the safe `unavailable` envelope. `start` is the only `ctl` action that spawns: `status`, `play`, `pause`, `toggle`, `next`, `stop` and `volume` keep attaching only and never start a player.
 
 The player listens on a Unix socket in a private directory (`$XDG_RUNTIME_DIR/gentle-stream`, default `~/.cache/gentle-stream/run`, mode `0700`), authenticated with a random key in a `0600` file. A player that crashed is detected and replaced on the next start. If the audio output cannot be opened, `gentle-stream` prints the error and exits with `1`.
 
@@ -213,8 +256,8 @@ model: claude-bridge/claude-haiku-5-5 · session: 35.4k tokens · $0.0015
 
 | Action | Calls a model? |
 | :--- | :--- |
-| Describing a mood (`/` or `--mood`) | **Yes** — the only thing that does |
-| Playback, `space`, `n`, volume | No |
+| Describing a mood (`/`, `--mood`, or `ctl mood`) | **Yes** — the only thing that does |
+| Playback, `space`, `n`, volume, `ctl status`/`start`/`play`/`pause`/`toggle`/`next`/`stop`/`volume` | No |
 | Saving (`s`) or applying (`p`) a prompt | No |
 | Failed or cancelled requests | Add nothing to the total |
 
