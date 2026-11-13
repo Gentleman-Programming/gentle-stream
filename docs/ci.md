@@ -68,7 +68,7 @@ shared library or sample download is provisioned. Read actual skip/deselection
 counts; unknown functional failures must fail visibly, not become new skips.
 No retries, `continue-on-error`, or blanket test exclusions are configured.
 
-## Native Windows selection
+## Native Windows selection and local portability
 
 The native job runs the reference portable/native contracts with the assembled
 UI names. Its main pytest selection is:
@@ -99,6 +99,28 @@ The remainder of that module requires POSIX executable fake sinks and SIGTERM
 semantics; it is not claimed compatible with native Windows. Benchmark collection
 runs separately on native Windows too. This is intentionally not a native
 full-suite claim, nor inherited proof from earlier slice runs.
+
+### Plain `uv run pytest` on native Windows
+
+Beyond the selective CI matrix steps, running plain `uv run pytest` (or `pytest`)
+directly on native Windows passes cleanly without requiring CI environment
+variables or manual file filtering:
+
+- **Screenshot UTF-8 encoding**: `tests/test_appearance.py` writes screenshot SVG
+  artifacts with explicit `encoding='utf-8'`, preventing `UnicodeEncodeError` under
+  Windows default locale encodings (such as `cp1252`).
+- **Runtime temp directory fallback**: The `runtime` fixture in `tests/test_daemon.py`
+  defaults to `tempfile.gettempdir()` when `GENTLE_STREAM_TEST_TEMP` is unset or
+  empty, so local Windows runs automatically use the OS temporary directory instead
+  of failing on `/tmp`.
+- **WSL and POSIX skips**: WSL-host POSIX pipe and adapter modules
+  (`tests/test_windows_audio.py`, `tests/test_windows_audio_diagnostics.py`,
+  `tests/test_windows_audio_independent.py`, and `tests/test_windows_shell_adapter.py`)
+  declare module-level `pytest.mark.skipif(sys.platform == "win32", ...)` skips.
+  In `tests/test_pause_output.py`, the 15 POSIX fake-sink and pipe tests skip
+  cleanly on `win32` via the `owned_output` fixture, while the portable PR17
+  regression (`test_host_pause_delivers_stop_with_full_pending_queue`) remains
+  active and passing on native Windows.
 
 ## Scratch, WSL and permissions
 

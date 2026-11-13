@@ -110,7 +110,9 @@ async def test_live_preview_cancel_save_recovery_and_no_audio(ui, size):
         shell.list_models.assert_not_called()
         shell.interpret_with_usage.assert_not_called()
         assert not legacy.path.exists() and not library.path.exists()
-        (legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg').write_text(app.export_screenshot())
+        svg_file = legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg'
+        (legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg').write_text(app.export_screenshot(), encoding='utf-8')
+        assert svg_file.read_text(encoding='utf-8').startswith('<svg')
 
 
 @pytest.mark.asyncio

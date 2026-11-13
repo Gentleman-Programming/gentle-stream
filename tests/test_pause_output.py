@@ -35,6 +35,8 @@ class Engine:
 
 @pytest.fixture
 def owned_output(tmp_path, monkeypatch, request):
+    if sys.platform == "win32":
+        pytest.skip("POSIX fake-sink pipe tests require a POSIX runtime")
     # The fake models a downstream queue: it retains bytes until the owned process
     # is stopped, rather than pretending silent callbacks flush an existing sink.
     events = tmp_path / 'events'
@@ -82,6 +84,9 @@ event('eof')
         yield p, stream, events, tmp_path
     finally:
         p.close()
+
+
+sink = owned_output
 
 
 def test_host_pause_delivers_stop_with_full_pending_queue(monkeypatch):

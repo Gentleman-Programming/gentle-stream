@@ -10,6 +10,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import pytest
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="WSL-host POSIX pipe/shebang interop tests require a POSIX runtime")
+
 
 ADAPTER = Path(__file__).resolve().parents[1] / "scripts" / "gentle-shell-windows"
 FAKE_WINDOWS_BUNDLE = PureWindowsPath(r"C:\Users\Example User\.gentle-shell-bundle")
