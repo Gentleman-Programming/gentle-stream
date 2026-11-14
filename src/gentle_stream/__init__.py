@@ -137,13 +137,60 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", help="model Gentle Shell uses to interpret moods, as provider/id "
                                     "(default: Gentle Shell's default model)")
     ap.add_argument("--mood", help="mood to interpret as soon as the app starts")
-    ap.add_argument("--gentle-shell", default="gentle-shell", metavar="PATH",
-                    help="gentle-shell executable (default: %(default)s)")
+    ap.add_argument("--gentle-shell", metavar="PATH",
+                    help="gentle-shell executable (default: gentle-shell); explicit overrides are incompatible "
+                         "with compact/floating mode")
+    ap.add_argument('--compact', action='store_true',
+                    help='minimal visualizer and transport only; incompatible with --mood/--model/explicit --gentle-shell')
+    ap.add_argument('--window-mode', choices=('window', 'floating'),
+                    help='launch dedicated Kitty on Hyprland classic dispatch exec (0.52); floating uses compact UI')
+    ap.add_argument('--window-size', metavar='WIDTHxHEIGHT',
+                    help='launcher size in pixels, each 1..16384; requires --window-mode')
+    ap.add_argument('--terminal', choices=('kitty',),
+                    help='launcher terminal (default kitty); requires --window-mode')
     sub = ap.add_subparsers(dest="command", metavar="command")
     sub.add_parser("setup-samples", help="download the FluidR3_GM soundfont (MIT) for sampled instruments, once")
     ctl_parser = sub.add_parser("ctl", help="control the music playing in the background")
     ctl_parser.add_argument("action", choices=("play", "pause", "toggle", "next", "stop", "status"))
     args = ap.parse_args(argv)
+    launcher_options = args.window_mode or args.window_size is not None or args.terminal is not None
+    if args.command and (args.compact or launcher_options):
+        ap.error('compact/window options cannot be combined with subcommands')
+    if not args.window_mode and (args.window_size is not None or args.terminal is not None):
+        ap.error('--window-size and --terminal require --window-mode')
+    if args.compact and args.window_mode:
+        ap.error('--compact is incompatible with --window-mode; floating selects compact automatically')
+    if (args.compact or args.window_mode == 'floating') and (args.mood is not None or args.model is not None):
+        ap.error('--mood/--model are incompatible with compact/floating mode (no mood interpretation); use window mode')
+    # Let argparse distinguish an explicit override (even its usual default
+    # value) from absence, without scanning values that merely resemble flags.
+    shell_explicit = args.gentle_shell is not None
+    if (args.compact or args.window_mode == 'floating') and shell_explicit:
+        ap.error('explicit --gentle-shell is incompatible with compact/floating mode (no shell invocation); use window mode')
+    if not shell_explicit:
+        args.gentle_shell = 'gentle-shell'
+    size = None
+    if args.window_size is not None:
+        from .window_launcher import parse_window_size
+
+        try:
+            size = parse_window_size(args.window_size)
+        except ValueError as error:
+            ap.error(str(error))
+    if args.window_mode:
+        from .window_launcher import LaunchError, launch_window
+
+        forwarded = []
+        for flag, value in (('--model', args.model), ('--mood', args.mood), ('--gentle-shell', args.gentle_shell)):
+            if value is not None and (flag != '--gentle-shell' or shell_explicit):
+                # Preserve leading hyphens as data in the child's argparse too.
+                forwarded.append(f'{flag}={value}')
+        try:
+            launch_window(args.window_mode, size, args.terminal or 'kitty', forwarded)
+        except LaunchError as error:
+            print(f'gentle-stream: {error}', file=sys.stderr)
+            return 1
+        return 0
     if args.command == "ctl":
         return ctl(args.action)
     if args.command == "setup-samples":
@@ -166,7 +213,12 @@ def main(argv: list[str] | None = None) -> int:
     except PlayerError as e:
         print(f"gentle-stream: {e}", file=sys.stderr)
         return 1
-    StreamApp(player, GentleShell(binary=args.gentle_shell, model=args.model), initial_mood=args.mood).run()
+    if args.compact:
+        from .compact_app import CompactStreamApp
+
+        CompactStreamApp(player).run()
+    else:
+        StreamApp(player, GentleShell(binary=args.gentle_shell, model=args.model), initial_mood=args.mood).run()
     return 0
 
 

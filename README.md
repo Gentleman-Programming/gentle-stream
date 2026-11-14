@@ -120,7 +120,12 @@ cd gentle-stream
 uv run gentle-stream
 ```
 
-It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
+It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; highlighting a theme previews it live before saving. `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
+
+For just a visualizer and one row of playback/volume controls, run `gentle-stream --compact`.
+On Hyprland, `--window-mode window` opens the full UI in Kitty; `--window-mode floating
+--window-size 360x180` opens the compact player. See [Hyprland windows and compact player](docs/hyprland.md)
+for launcher requirements, pixel sizing, hover shortcuts and compositor limitations.
 
 **WSL optional Windows output:** select `GENTLE_STREAM_AUDIO_OUTPUT=windows` when
 starting a new player to stream live mixed PCM to native Windows FFplay instead
@@ -217,6 +222,10 @@ not a guaranteed fix for every cause of stutter, and it does not restart Gentle 
 | `--model provider/id` | Model Gentle Shell uses to interpret moods (default: Gentle Shell's default) |
 | `--mood TEXT` | Mood to interpret as soon as the app starts |
 | `--gentle-shell PATH` | `gentle-shell` executable to run (default: `gentle-shell`) |
+| `--compact` | Visualizer and transport only in the current terminal; incompatible with `--mood`/`--model` |
+| `--window-mode {window,floating}` | Launch Kitty on Hyprland's classic `dispatch exec` API (0.52); floating uses compact UI and rejects `--mood`/`--model` |
+| `--window-size WIDTHxHEIGHT` | Launcher size in pixels, each dimension 1–16384; requires `--window-mode` |
+| `--terminal kitty` | Launcher terminal (Kitty only); requires `--window-mode` |
 | `setup-samples` | Subcommand: download the FluidR3_GM soundfont once (see below) |
 | `ctl ACTION` | Subcommand: control the music playing in the background (see below) |
 
