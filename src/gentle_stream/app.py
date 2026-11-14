@@ -549,6 +549,9 @@ class StreamApp(App):
         self._buttons["play"].set_class(not p.playing, "paused")
         gap = ' ' * self.preferences.icon_gap
         self._buttons["continuous"].label = f"↻{gap}{'on' if p.continuous is True else 'off'}"
+        for screen in self.screen_stack:
+            if isinstance(screen, SettingsScreen) and screen.is_mounted:
+                screen.refresh_preview()
 
     def _show_model(self) -> None:
         session = f" · session: {self.session_usage.format()}" if self.session_usage else ""

@@ -5,23 +5,34 @@ binding, including inside an input, and remains available with the controls, moo
 input, visualizer, details and footer hidden. The command palette also includes
 **Settings**. Its muted description separates visual controls from model choice; the
 model picker explains that its selection affects future moods, not current playback.
-Use Tab/Shift+Tab to navigate; the settings form scrolls on small terminals.
+Use Tab/Shift+Tab to navigate. Settings shows a read-only miniature of the full
+player beside the form at wide sizes (120×30 and 140×40). At 80×24 and 60×20,
+the form and miniature stack in a scrollable body; status and actions stay outside
+that scroll. The miniature includes track details, mood, spectrum, playback state,
+model/session, status, transport/volume, mood input and footer facsimiles. These
+are not controls: they cannot change playback or submit moods. Spectrum height is
+bounded to fit the miniature. No second window, player, poll or timer is created.
 
 - **Theme** previews automatically as you highlight options with arrow keys or
   type-to-search, without pressing Enter or saving. Enter keeps the highlighted
   choice in the form; Escape closes just the dropdown and restores its previous
   choice. Moving focus away also restores the dropdown's selected choice.
-  Only the theme changes during navigation; other form edits wait for Preview/Save.
-- **Preview** still validates the whole form and applies it immediately without saving.
+  The highlighted theme is a temporary overlay on the last valid draft, never on
+  the real player. Every valid Input, Select and Switch edit updates the miniature
+  immediately. Invalid fields show a field-specific error and retain the last valid
+  miniature until corrected.
+- **Preview** validates the whole form and refreshes only the miniature.
 - **Save** validates and atomically persists the whole form, then applies it. It stays
   open with `Appearance saved.` so you can continue editing.
 - **Defaults** previews the original appearance and fills the form with defaults.
   Save keeps that reset; Cancel discards it.
-- **Cancel** or Escape restores the last successful save, or the appearance at opening
-  if nothing was saved. Invalid forms remain open with a field-specific error such
-  as `Invalid accent.`; rejected Preview/Save leaves the current temporary appearance,
-  stored bytes and player parameters unchanged. A failed Save does not advance the
-  Cancel baseline. Theme previews never change playback or the selected mood model.
+- **Cancel** or Escape discards the unsaved draft without reapplying preferences to
+  the real player. The real player stays unchanged until a successful Save. After a
+  Save, further edits followed by Cancel keep that last save. Invalid forms remain
+  open with errors such as `Invalid accent.`; rejected Preview/Save leaves the last
+  valid miniature, owner preferences, stored bytes and player parameters unchanged.
+  A failed Save does not advance the baseline. Theme previews never change playback
+  or the selected mood model.
 
 The gear still shows the actual selected model, with a full tooltip for long IDs.
 **Choose mood model…** explicitly opens the existing model picker. **m** goes directly
@@ -64,9 +75,12 @@ or fewer the same one-row gauge remains visible.
 Hiding the graph shrinks the panel rather than reserving empty graph space. **/** temporarily reveals and focuses a hidden mood input without changing its
 saved visibility; applying preferences again restores the configured visibility.
 
-Refresh uses one UI-thread timer. Applying preferences stops the previous timer;
-no audio threads are created or replaced. Hidden visualizers still poll the existing
-spectrum interface to refresh audible metadata, without rendering the hidden graph.
+Refresh uses one UI-thread timer. Only successful Save replaces that timer during
+Settings editing; draft poll-rate changes are visual-only until saved. Hidden
+visualizers still poll the existing spectrum interface to refresh audible metadata,
+without rendering the hidden graph. The miniature resamples a defensive copy of
+that cached raw sample with its own smoothing and peaks, including beneath the
+model picker. Before a sample exists it explicitly reports a silent preview.
 
 ## Storage and recovery
 
@@ -86,7 +100,8 @@ force-overwrite mechanism for corrupt data.
 a same-directory staging file, then atomically replace the record. A failed write may
 retain a `.appearance-*.tmp` diagnostic staging file; it does not claim success.
 `StreamApp.apply_preferences(preferences, persist=False)` is the single application
-path shared by Settings, startup, preview, save and cancel.
+path shared by startup and successful Settings Save. Draft edits, Preview,
+Defaults and Cancel do not call it.
 
 ## Playback safety
 

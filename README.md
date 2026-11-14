@@ -120,7 +120,7 @@ cd gentle-stream
 uv run gentle-stream
 ```
 
-It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; highlighting a theme previews it live before saving. `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
+It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; valid edits and theme highlights update a read-only full-player miniature beside the form (stacked and scrollable on narrow terminals), without changing the real player until Save. `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
 
 For just a visualizer and one row of playback/volume controls, run `gentle-stream --compact`.
 On Hyprland, `--window-mode window` opens the full UI in Kitty; `--window-mode floating
@@ -177,8 +177,11 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 ## Controls
 
 **F2** or the **gear** opens [Appearance settings](docs/appearance.md): live spectrum
-styles, colors, layout and visibility, plus explicit model selection. Preview/Cancel
-is temporary; Save persists independently of songs. F2 always works, even when the
+styles, colors, layout and visibility, plus explicit model selection. A full-player
+miniature previews valid edits locally; Preview and Defaults affect only that draft.
+Save atomically persists and applies; Cancel discards unsaved edits. The miniature
+cannot control playback or submit moods, and uses the existing player's cached
+sample without another poll or timer. Preferences persist independently of songs. F2 always works, even when the
 controls and footer are hidden. The command palette also includes Settings.
 
 The compact clickable command strip sits between the spectrum panel and mood input.

@@ -12,7 +12,7 @@ CONTROLS = """controls:
            keeps musical settings, playlist, pause and volume; no AI call. A hard cut may click.
            recovery does not guarantee to fix stutter; reopen failures are shown, not Playing.
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
-  F2       Settings: live appearance, visibility, and explicit mood model selection
+  F2       Settings: read-only full-player preview beside appearance and model settings
            always available, even with hidden controls/input/footer; also in the command palette
   m        choose the model Gentle Shell uses directly
   s        save what is playing: Saved prompts, new playlist, or existing playlist
@@ -27,7 +27,8 @@ CONTROLS = """controls:
   ⏮ button: previous playlist song (wraps), repeat on or off; preserves pause and volume.
             Select a song in Playlist first. No new key; this does not restart the current song.
   gear opens Settings and shows the chosen model (or honest Gentle Shell default).
-  Settings: Preview is temporary; Save persists; Defaults previews defaults; Cancel restores last save.
+  Settings: valid edits preview only in the miniature; Save persists and applies.
+  Preview validates the pane; Defaults resets the draft; Cancel discards unsaved edits.
   UI-only preferences live in appearance.json; visualizer changes never change audio parameters.
   / temporarily reveals hidden mood input without saving visibility. Fonts belong to the terminal.
   See docs/appearance.md for settings ranges and storage recovery.

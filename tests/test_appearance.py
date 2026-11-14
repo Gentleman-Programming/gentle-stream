@@ -6,7 +6,9 @@ from textual.widgets import Input, Select, Switch
 
 from gentle_stream.appearance import Preferences, PreferenceError, PreferenceStore
 from gentle_stream.appearance_ui import SettingsScreen
-from tests.test_ui_toolbar_contracts import ui, shown  # noqa: F401
+from tests import test_ui_toolbar_contracts as toolbar
+
+ui, shown = toolbar.ui, toolbar.shown
 
 
 @pytest.mark.parametrize("key,value", [("refresh_hz", 4), ("refresh_hz", 31), ("bands", 7),
@@ -35,7 +37,7 @@ def test_roundtrip_defaults_bounds_and_corrupt_record(tmp_path):
         assert store.load() == prefs
     store.path.write_text('{oops')
     assert store.load() == Preferences()
-    assert store.error.startswith("Cannot read appearance preferences:")
+    assert store.error and store.error.startswith("Cannot read appearance preferences:")
     with pytest.raises(PreferenceError, match="Cannot read appearance preferences:"):
         store.save(Preferences())
     assert store.path.read_text() == '{oops'
@@ -81,9 +83,10 @@ async def test_live_preview_cancel_save_recovery_and_no_audio(ui, size):
         await app.screen.submit('preview')
         assert shown(app, '#settings-status') == 'Preview only — Save to keep; Cancel restores.'
         root = app.screen_stack[0]
-        assert not root.query_one('#spectrum').display
-        assert not root.query_one('#commands').display
-        assert root.query_one('#panel').styles.height.is_auto
+        assert root.query_one('#spectrum').display
+        assert root.query_one('#commands').display
+        assert not app.screen.query_one('#preview-spectrum').display
+        assert not app.screen.query_one('#preview-commands').display
         await pilot.press('escape')
         assert root.query_one('#commands').display
         await pilot.press('f2')
@@ -147,22 +150,24 @@ async def test_theme_highlight_preview_escape_and_settings_cancel(ui, size):
         artifact.write_text(app.export_screenshot(), encoding='utf-8')
         await pilot.press('down')
         assert theme.expanded and theme.value == 'gentle'
-        assert app.preferences == replace(opening, theme='black')
-        assert app.current_theme.background == '#000000'
+        assert app.preferences == opening
+        assert app.screen.query_one('#appearance-preview').preferences.theme == 'black'
+        assert app.screen.query_one('#appearance-preview').styles.background.hex == '#000000'
         assert app.preference_store.path.read_bytes() == stored
         await pilot.wait_for_scheduled_animations()
         artifact = legacy.path.parent / f'theme-highlight-{size[0]}x{size[1]}.svg'
         artifact.write_text(app.export_screenshot(), encoding='utf-8')
         await pilot.press('down')
-        assert theme.expanded and app.preferences.theme == 'charcoal'
-        assert app.current_theme.background == '#202020'
+        assert theme.expanded and app.preferences == opening
+        assert app.screen.query_one('#appearance-preview').styles.background.hex == '#202020'
         await pilot.press('escape')
         assert isinstance(app.screen, SettingsScreen) and not theme.expanded
         assert theme.value == 'gentle' and app.preferences == opening
         theme = await open_theme(app, pilot)
         await pilot.press('down', 'enter')
         assert not theme.expanded and theme.value == 'black'
-        assert app.preferences.theme == 'black'
+        assert app.preferences == opening
+        assert app.screen.query_one('#appearance-preview').preferences.theme == 'black'
         assert app.preference_store.path.read_bytes() == stored
         await pilot.press('escape')
         assert not isinstance(app.screen, SettingsScreen)
@@ -179,7 +184,8 @@ async def test_theme_save_then_preview_cancel_uses_latest_saved_baseline(ui):
         await pilot.press('f2')
         theme = await open_theme(app, pilot)
         await pilot.press('down', 'enter')
-        assert app.preferences.theme == 'black'
+        assert app.preferences.theme == 'gentle'
+        assert app.screen.query_one('#appearance-preview').preferences.theme == 'black'
         assert not app.preference_store.path.exists()
         await app.screen.submit('save')
         saved = app.preferences
@@ -188,7 +194,7 @@ async def test_theme_save_then_preview_cancel_uses_latest_saved_baseline(ui):
         assert app.preference_store.load() == saved
         await open_theme(app, pilot)
         await pilot.press('down', 'enter')
-        assert theme.value == 'charcoal' and app.preferences.theme == 'charcoal'
+        assert theme.value == 'charcoal' and app.preferences == saved
         assert app.preference_store.path.read_bytes() == stored
         await app.screen.submit('cancel')
         assert app.preferences == saved
@@ -212,7 +218,8 @@ async def test_theme_preview_failed_save_preserves_bytes_and_opening_baseline(ui
         await open_theme(app, pilot)
         await pilot.press('down', 'enter')
         preview = app.preferences
-        assert preview.theme == 'black'
+        assert preview == opening
+        assert app.screen.query_one('#appearance-preview').preferences.theme == 'black'
         await app.screen.submit('save')
         assert shown(app, '#settings-status') == (
             'Cannot write appearance preferences: test replacement refused')
@@ -234,10 +241,10 @@ async def test_theme_highlight_does_not_apply_invalid_unrelated_form(ui):
         app.screen.query_one('#pref-accent', Input).value = 'invalid'
         await open_theme(app, pilot)
         await pilot.press('down', 'enter')
-        assert app.preferences == replace(Preferences(), theme='black')
+        assert app.preferences == Preferences()
         await app.screen.submit('preview')
         assert shown(app, '#settings-status') == 'Invalid accent.'
-        assert app.preferences == replace(Preferences(), theme='black')
+        assert app.preferences == Preferences()
         assert not app.preference_store.path.exists()
         await app.screen.submit('cancel')
         assert app.preferences == Preferences()
@@ -275,11 +282,9 @@ async def test_live_color_updates_and_command_palette(ui):
             await app.screen.submit('preview')
             await pilot.wait_for_scheduled_animations()
             await pilot.pause()
-            assert app.current_theme.primary == color
-            assert app.screen_stack[0].query_one('#title').styles.color.hex.lower() == color
-            widget_color = app.screen_stack[0].query_one('#playlist').styles.color
-            assert all(abs(actual - int(color[i:i + 2], 16)) <= 1
-                       for actual, i in zip((widget_color.r, widget_color.g, widget_color.b), (1, 3, 5)))
+            assert app.preferences == Preferences()
+            assert app.screen.query_one('#appearance-preview').preferences.accent == color
+            assert app.screen.query_one('#preview-title').styles.color.hex.lower() == color
         assert p.start.call_count == 1
         assert not app.preference_store.path.exists()
 

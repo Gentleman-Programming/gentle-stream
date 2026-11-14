@@ -51,6 +51,12 @@ class Spectrum(Static):
         self.player = player
         self.preferences = Preferences()
         self._levels = self._peaks = self._deadlines = None
+        self._cached_sample = None
+
+    @property
+    def cached_sample(self):
+        """Defensive copy of the last raw poll, including when hidden."""
+        return None if self._cached_sample is None else self._cached_sample.copy()
 
     def configure(self, preferences: Preferences) -> None:
         self.preferences = preferences
@@ -61,6 +67,7 @@ class Spectrum(Static):
         width = max(1, self.size.width or 48)
         count = min(p.bands, max(1, (width + 1) // 2 if p.style == 'segmented' else width))
         levels = np.clip(self.player.spectrum(count), 0, 1)
+        self._cached_sample = levels.copy()
         # Still poll while hidden: background clients refresh their audible metadata here.
         if not self.display:
             return
