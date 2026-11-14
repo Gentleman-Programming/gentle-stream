@@ -1,12 +1,13 @@
 """Native, keyboard-accessible settings with explicit preview and persistence."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static, Switch
+from textual.widgets import Button, Input, OptionList, Select, Static, Switch
 
 from .appearance import Preferences, PreferenceError
 
@@ -20,6 +21,31 @@ LABELS = {'height': 'Minimum bar height (5–30 rows)', 'bands': 'Bands (8–128
           'show_input': 'Show mood input', 'show_footer': 'Show footer',
           'show_details': 'Show track details', 'show_model': 'Show model line',
           'compact': 'Compact layout'}
+
+
+class ThemeSelect(Select[str]):
+    """Preview the cursor without committing the dropdown's selected value."""
+
+    class Preview(Message):
+        def __init__(self, theme: str):
+            super().__init__()
+            self.theme = theme
+
+    def on_mount(self) -> None:
+        # Select's overlay consumes OptionHighlighted messages. Observe its public
+        # cursor instead; keep Select's own Enter, search and Escape behavior.
+        self.watch(self.query_one(OptionList), 'highlighted', self.preview_highlight,
+                   init=False)
+        self.watch(self, 'expanded', self.preview_selection, init=False)
+
+    def preview_highlight(self, index: int | None) -> None:
+        if self.expanded and index is not None:
+            self.post_message(self.Preview(CHOICES['theme'][index]))
+
+    def preview_selection(self, expanded: bool) -> None:
+        if not expanded and isinstance(self.value, str):
+            # Enter has already updated value; Escape/blur leave it untouched.
+            self.post_message(self.Preview(self.value))
 
 
 class SettingsScreen(ModalScreen):
@@ -61,14 +87,15 @@ class SettingsScreen(ModalScreen):
                     with Horizontal(classes='setting-row'):
                         yield Static(LABELS.get(key, key.title()))
                         if key in CHOICES:
-                            yield Select([(s.title(), s) for s in CHOICES[key]], value=value,
-                                         allow_blank=False, id='pref-' + key)
+                            selector = ThemeSelect if key == 'theme' else Select
+                            yield selector([(s.title(), s) for s in CHOICES[key]], value=value,
+                                           allow_blank=False, id='pref-' + key)
                         elif type(value) is bool:
                             yield Switch(value, id='pref-' + key)
                         else:
                             yield Input(str(value), id='pref-' + key)
             yield Static(Text(self.owner.preference_store.error or
-                              'Preview is temporary. Save keeps changes. Cancel restores the last save.'),
+                              'Theme navigation previews temporarily. Save keeps changes. Cancel restores.'),
                          id='settings-status')
             with Horizontal(id='settings-actions'):
                 for label, key in [('Preview', 'preview'), ('Save', 'save'),
@@ -111,6 +138,21 @@ class SettingsScreen(ModalScreen):
             self.query_one('#settings-status', Static).update(Text(message))
         except PreferenceError as e:
             self.query_one('#settings-status', Static).update(Text(str(e)))
+
+    def on_theme_select_preview(self, event: ThemeSelect.Preview) -> None:
+        event.stop()
+        self.preview_theme(event.theme)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if isinstance(event.select, ThemeSelect) and isinstance(event.value, str):
+            self.preview_theme(event.value)
+
+    def preview_theme(self, theme: str) -> None:
+        # Theme navigation must not apply unrelated, possibly invalid form edits.
+        if self.owner.preferences.theme != theme:
+            self.owner.apply_preferences(replace(self.owner.preferences, theme=theme))
+            self.query_one('#settings-status', Static).update(
+                Text('Preview only — Save to keep; Cancel restores.'))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()

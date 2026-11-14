@@ -7,14 +7,21 @@ input, visualizer, details and footer hidden. The command palette also includes
 model picker explains that its selection affects future moods, not current playback.
 Use Tab/Shift+Tab to navigate; the settings form scrolls on small terminals.
 
-- **Preview** validates the whole form and applies it immediately without saving.
+- **Theme** previews automatically as you highlight options with arrow keys or
+  type-to-search, without pressing Enter or saving. Enter keeps the highlighted
+  choice in the form; Escape closes just the dropdown and restores its previous
+  choice. Moving focus away also restores the dropdown's selected choice.
+  Only the theme changes during navigation; other form edits wait for Preview/Save.
+- **Preview** still validates the whole form and applies it immediately without saving.
 - **Save** validates and atomically persists the whole form, then applies it. It stays
   open with `Appearance saved.` so you can continue editing.
 - **Defaults** previews the original appearance and fills the form with defaults.
   Save keeps that reset; Cancel discards it.
 - **Cancel** or Escape restores the last successful save, or the appearance at opening
   if nothing was saved. Invalid forms remain open with a field-specific error such
-  as `Invalid accent.`; no preference, stored bytes or player parameter changes.
+  as `Invalid accent.`; rejected Preview/Save leaves the current temporary appearance,
+  stored bytes and player parameters unchanged. A failed Save does not advance the
+  Cancel baseline. Theme previews never change playback or the selected mood model.
 
 The gear still shows the actual selected model, with a full tooltip for long IDs.
 **Choose mood model…** explicitly opens the existing model picker. **m** goes directly

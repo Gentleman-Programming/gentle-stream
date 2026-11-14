@@ -2,7 +2,7 @@
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Input, Switch
+from textual.widgets import Input, Select, Switch
 
 from gentle_stream.appearance import Preferences, PreferenceError, PreferenceStore
 from gentle_stream.appearance_ui import SettingsScreen
@@ -113,6 +113,135 @@ async def test_live_preview_cancel_save_recovery_and_no_audio(ui, size):
         svg_file = legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg'
         (legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg').write_text(app.export_screenshot(), encoding='utf-8')
         assert svg_file.read_text(encoding='utf-8').startswith('<svg')
+
+
+async def open_theme(app, pilot):
+    theme = app.screen.query_one('#pref-theme', Select)
+    theme.focus()
+    await pilot.pause()
+    await pilot.press('enter')
+    assert theme.expanded
+    return theme
+
+
+def assert_appearance_only(player, shell, before, legacy, library):
+    assert [call for call in player.mock_calls if call[0] != 'spectrum'] == before
+    assert shell.model is None
+    shell.list_models.assert_not_called()
+    shell.interpret_with_usage.assert_not_called()
+    assert not legacy.path.exists() and not library.path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('size', [(60, 20), (80, 24), (120, 30)])
+async def test_theme_highlight_preview_escape_and_settings_cancel(ui, size):
+    app, player, shell, legacy, library = ui
+    app.preference_store.save(app.preferences)
+    stored = app.preference_store.path.read_bytes()
+    opening = app.preferences
+    async with app.run_test(size=size) as pilot:
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        theme = await open_theme(app, pilot)
+        artifact = legacy.path.parent / f'theme-before-{size[0]}x{size[1]}.svg'
+        artifact.write_text(app.export_screenshot(), encoding='utf-8')
+        await pilot.press('down')
+        assert theme.expanded and theme.value == 'gentle'
+        assert app.preferences == replace(opening, theme='black')
+        assert app.current_theme.background == '#000000'
+        assert app.preference_store.path.read_bytes() == stored
+        await pilot.wait_for_scheduled_animations()
+        artifact = legacy.path.parent / f'theme-highlight-{size[0]}x{size[1]}.svg'
+        artifact.write_text(app.export_screenshot(), encoding='utf-8')
+        await pilot.press('down')
+        assert theme.expanded and app.preferences.theme == 'charcoal'
+        assert app.current_theme.background == '#202020'
+        await pilot.press('escape')
+        assert isinstance(app.screen, SettingsScreen) and not theme.expanded
+        assert theme.value == 'gentle' and app.preferences == opening
+        theme = await open_theme(app, pilot)
+        await pilot.press('down', 'enter')
+        assert not theme.expanded and theme.value == 'black'
+        assert app.preferences.theme == 'black'
+        assert app.preference_store.path.read_bytes() == stored
+        await pilot.press('escape')
+        assert not isinstance(app.screen, SettingsScreen)
+        assert app.preferences == opening
+        assert app.preference_store.path.read_bytes() == stored
+        assert_appearance_only(player, shell, before, legacy, library)
+
+
+@pytest.mark.asyncio
+async def test_theme_save_then_preview_cancel_uses_latest_saved_baseline(ui):
+    app, player, shell, legacy, library = ui
+    async with app.run_test() as pilot:
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        theme = await open_theme(app, pilot)
+        await pilot.press('down', 'enter')
+        assert app.preferences.theme == 'black'
+        assert not app.preference_store.path.exists()
+        await app.screen.submit('save')
+        saved = app.preferences
+        stored = app.preference_store.path.read_bytes()
+        assert shown(app, '#settings-status') == 'Appearance saved.'
+        assert app.preference_store.load() == saved
+        await open_theme(app, pilot)
+        await pilot.press('down', 'enter')
+        assert theme.value == 'charcoal' and app.preferences.theme == 'charcoal'
+        assert app.preference_store.path.read_bytes() == stored
+        await app.screen.submit('cancel')
+        assert app.preferences == saved
+        assert app.preference_store.path.read_bytes() == stored
+        assert_appearance_only(player, shell, before, legacy, library)
+
+
+@pytest.mark.asyncio
+async def test_theme_preview_failed_save_preserves_bytes_and_opening_baseline(ui, monkeypatch):
+    import gentle_stream.appearance as appearance
+    app, player, shell, legacy, library = ui
+    opening = app.preferences
+    app.preference_store.save(opening)
+    stored = app.preference_store.path.read_bytes()
+    def refuse(*args):
+        raise OSError('test replacement refused')
+    monkeypatch.setattr(appearance.os, 'replace', refuse)
+    async with app.run_test() as pilot:
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        await open_theme(app, pilot)
+        await pilot.press('down', 'enter')
+        preview = app.preferences
+        assert preview.theme == 'black'
+        await app.screen.submit('save')
+        assert shown(app, '#settings-status') == (
+            'Cannot write appearance preferences: test replacement refused')
+        assert app.preferences == preview
+        assert app.preference_store.path.read_bytes() == stored
+        assert app.preference_store.load() == opening
+        await app.screen.submit('cancel')
+        assert app.preferences == opening
+        assert app.preference_store.path.read_bytes() == stored
+        assert_appearance_only(player, shell, before, legacy, library)
+
+
+@pytest.mark.asyncio
+async def test_theme_highlight_does_not_apply_invalid_unrelated_form(ui):
+    app, player, shell, legacy, library = ui
+    async with app.run_test() as pilot:
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        app.screen.query_one('#pref-accent', Input).value = 'invalid'
+        await open_theme(app, pilot)
+        await pilot.press('down', 'enter')
+        assert app.preferences == replace(Preferences(), theme='black')
+        await app.screen.submit('preview')
+        assert shown(app, '#settings-status') == 'Invalid accent.'
+        assert app.preferences == replace(Preferences(), theme='black')
+        assert not app.preference_store.path.exists()
+        await app.screen.submit('cancel')
+        assert app.preferences == Preferences()
+        assert_appearance_only(player, shell, before, legacy, library)
 
 
 @pytest.mark.asyncio
