@@ -7,6 +7,8 @@ import sys
 
 CONTROLS = """controls:
   space    play / pause
+  r        full / miniplayer in this session (also the top-right ▾/▴ button)
+           keeps the same player and music; not the separate startup --compact mode
   n        next piece with the same mood (next song during continuous playback)
   F4       Panic: immediately cut output, reopen it and restart the current track from the beginning
            keeps musical settings, playlist, pause and volume; no AI call. A hard cut may click.
@@ -30,7 +32,9 @@ CONTROLS = """controls:
   Settings: valid edits preview only in the miniature; Save persists and applies.
   Preview validates the pane; Defaults resets the draft; Cancel discards unsaved edits.
   UI-only preferences live in appearance.json; visualizer changes never change audio parameters.
-  / temporarily reveals hidden mood input without saving visibility. Fonts belong to the terminal.
+  / temporarily reveals hidden mood input in full mode without saving visibility.
+  Miniplayer keeps spectrum, transport and volume visible; F2 always opens Settings.
+  Fonts belong to the terminal.
   See docs/appearance.md for settings ranges and storage recovery.
   + / -    volume up / down by 5%
   ↑ / ↓    volume up / down by 1%
@@ -42,6 +46,13 @@ background playback:
   gentle-stream ctl play|pause|toggle|next|stop|status controls it from any terminal
   (status prints one JSON line with underruns, output_underflows and buffered_seconds;
    diagnostics are null with older players; the others exit 1 when nothing is playing).
+
+native Windows desktop (optional):
+  gentle-stream --desktop uses one persistent terminal/player in a frameless full/mini window.
+  Install gentle-stream[desktop] and Edge WebView2 Runtime; offline terminal assets are bundled.
+  Close (or b/q) stops this session's music. Settings drafts do not change the window theme.
+  --desktop cannot be combined with --compact, window launcher options or subcommands.
+  See docs/windows-desktop-host.md; actual Windows behavior approval remains pending.
 
 native Windows (no WSL):
   run with Python 3.13+ and the default sounddevice output; no FFplay is needed.
@@ -121,7 +132,7 @@ def ctl(action: str) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, desktop_control=None) -> int:
     # Windows consoles use UTF-8, but redirected Python output otherwise uses
     # the legacy ANSI code page, which cannot represent the documented controls.
     if sys.platform == "win32":
@@ -141,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--gentle-shell", metavar="PATH",
                     help="gentle-shell executable (default: gentle-shell); explicit overrides are incompatible "
                          "with compact/floating mode")
+    ap.add_argument('--desktop', action='store_true',
+                    help='optional native Windows desktop window; full/mini transforms the same player')
     ap.add_argument('--compact', action='store_true',
                     help='minimal visualizer and transport only; incompatible with --mood/--model/explicit --gentle-shell')
     ap.add_argument('--window-mode', choices=('window', 'floating'),
@@ -155,6 +168,20 @@ def main(argv: list[str] | None = None) -> int:
     ctl_parser.add_argument("action", choices=("play", "pause", "toggle", "next", "stop", "status"))
     args = ap.parse_args(argv)
     launcher_options = args.window_mode or args.window_size is not None or args.terminal is not None
+    if args.desktop and (args.compact or launcher_options):
+        ap.error('--desktop is incompatible with --compact and --window-mode')
+    if args.desktop and args.command:
+        ap.error('--desktop cannot be combined with subcommands')
+    if args.desktop:
+        if sys.platform != 'win32':
+            print('gentle-stream: --desktop requires native Windows; use ordinary gentle-stream on this platform',
+                  file=sys.stderr)
+            return 1
+        from .desktop_session import launch
+        forwarded = [f'{flag}={value}' for flag, value in
+                     (('--mood', args.mood), ('--model', args.model), ('--gentle-shell', args.gentle_shell))
+                     if value is not None]
+        return launch(forwarded)
     if args.command and (args.compact or launcher_options):
         ap.error('compact/window options cannot be combined with subcommands')
     if not args.window_mode and (args.window_size is not None or args.terminal is not None):
@@ -206,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
     from .bridge import GentleShell
     from .client import AudioError, PlayerError, ensure
 
+    if desktop_control is not None and desktop_control.stopping():
+        return 0
     try:
         player = ensure()   # attach to the music already playing, or start the background player
     except AudioError as e:  # PortAudio missing, no output device, device busy...
@@ -219,7 +248,9 @@ def main(argv: list[str] | None = None) -> int:
 
         CompactStreamApp(player).run()
     else:
-        StreamApp(player, GentleShell(binary=args.gentle_shell, model=args.model), initial_mood=args.mood).run()
+        app = StreamApp(player, GentleShell(binary=args.gentle_shell, model=args.model), initial_mood=args.mood)
+        app.desktop_control = desktop_control
+        app.run()
     return 0
 
 

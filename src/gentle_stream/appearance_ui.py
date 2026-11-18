@@ -74,6 +74,12 @@ class SettingsScreen(ModalScreen):
     SettingsScreen #settings-actions #settings-save { background: $primary; color: $background;
                                                       text-style: bold; }
     SettingsScreen Button:focus { background: $primary; color: $background; text-style: bold; }
+    SettingsScreen.short > Vertical { height: 100%; padding: 0; }
+    SettingsScreen.short #settings-title, SettingsScreen.short #settings-description { display: none; }
+    SettingsScreen.short #settings-status { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    SettingsScreen.short #settings-actions { height: 1; }
+    SettingsScreen.short #settings-actions Button { height: 1; min-height: 1; padding: 0; }
+    SettingsScreen.short Input, SettingsScreen.short Select { width: 18; }
     '''
 
     def __init__(self, owner):
@@ -117,13 +123,17 @@ class SettingsScreen(ModalScreen):
         pane = self.query_one(AppearancePreview)
         self._preview = pane
         self._preview_parts = tuple(part for part in pane.children if isinstance(part, Static))
-        self.set_class(self.size.width < 110, 'narrow')
+        self._layout_size()
         # Initial widget messages and bulk value changes must settle before validation.
         self.call_after_refresh(self.enable_draft)
         self.refresh_preview()
 
-    def on_resize(self) -> None:
+    def _layout_size(self) -> None:
         self.set_class(self.size.width < 110, 'narrow')
+        self.set_class(self.size.height < 20, 'short')
+
+    def on_resize(self) -> None:
+        self._layout_size()
 
     def on_unmount(self) -> None:
         self._ready = False

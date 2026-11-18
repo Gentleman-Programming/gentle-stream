@@ -52,6 +52,7 @@ class Spectrum(Static):
         self.preferences = Preferences()
         self._levels = self._peaks = self._deadlines = None
         self._cached_sample = None
+        self.runtime_height: int | None = None
 
     @property
     def cached_sample(self):
@@ -80,5 +81,7 @@ class Spectrum(Static):
         reset = (self._levels >= self._peaks) | (now >= self._deadlines)
         self._peaks[reset] = self._levels[reset]
         self._deadlines[reset] = now + p.peak_hold
-        self.update(render_spectrum(self._levels, max(p.height, self.size.height or p.height), p,
+        rows = (max(1, self.runtime_height) if self.runtime_height is not None
+                else max(p.height, self.size.height or p.height))
+        self.update(render_spectrum(self._levels, rows, p,
                                     self._peaks if p.peak_hold else None, width))

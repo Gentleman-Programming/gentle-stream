@@ -36,7 +36,7 @@ class AppearancePreview(Vertical):
         self._sample = None
 
     def compose(self) -> ComposeResult:
-        for name in ('title', 'details', 'mood', 'spectrum', 'state', 'model',
+        for name in ('mode-toggle', 'title', 'details', 'mood', 'spectrum', 'state', 'model',
                      'status', 'commands', 'input', 'footer'):
             yield Static(id='preview-' + name, markup=False)
 
@@ -93,6 +93,7 @@ class AppearancePreview(Vertical):
             text.stylize(f'on {canvas}')
             widget.update(text)
 
+        update('mode-toggle', Text('▾', justify='right'))
         for name in ('title', 'details', 'mood', 'state', 'model', 'status'):
             widget = self.query_one('#preview-' + name, Static)
             value = snapshot[name]

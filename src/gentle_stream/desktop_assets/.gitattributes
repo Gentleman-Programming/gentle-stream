@@ -1,0 +1,4 @@
+# Keep the upstream assets byte-identical on Windows for provenance checks.
+*.js -text
+*.css -text
+licenses/* -text

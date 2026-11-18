@@ -11,13 +11,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import time
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.markup import escape
-from textual.containers import Horizontal, HorizontalScroll, Vertical
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Footer, Header, Input, OptionList, Select, Static, Tab, Tabs
@@ -35,6 +36,9 @@ from .playlist_library import PlaylistLibrary
 from .playlists import default_playlist
 from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 from .style import Style
+
+if TYPE_CHECKING:
+    from .desktop_control import SessionChannel
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
 
@@ -421,9 +425,33 @@ class StreamApp(App):
     Screen.compact #status { margin-top: 0; }
     #mood { margin: 0 1 1 1; border: round $panel; background: $surface; }
     #mood:focus { border: round $primary; }
+    #mode-toggle { dock: top; layer: overlay; align-horizontal: right; offset-x: 100%;
+                   margin-left: -5; width: 5; min-width: 5; height: 1; min-height: 1;
+                   border: none; padding: 0; background: $panel; color: $primary; }
+    #mode-toggle:focus { text-style: bold reverse; }
+    Screen.small #panel { padding: 0 1; margin: 0; min-height: 1; }
+    Screen.small #spectrum { height: 5; min-height: 5; margin: 0; }
+    Screen.small #commands { layout: vertical; height: 3; margin: 0; }
+    Screen.small #commands-left, Screen.small #commands-right { width: 100%; height: 1; }
+    Screen.small #transport { height: 1; }
+    Screen.small #mood { height: 3; margin: 0; }
+    Screen.mini #panel { padding: 0; margin: 0; border: none; height: 1fr; }
+    Screen.mini #spectrum { height: 1fr; min-height: 1; margin: 0; }
+    Screen.mini #commands { layout: horizontal; height: 1; margin: 0; align-horizontal: center; }
+    Screen.mini #commands-left, Screen.mini #model-command { display: none; }
+    Screen.mini #transport { width: 9; height: 1; }
+    Screen.mini #commands-right { width: 19; height: 1; }
+    Screen.mini #commands Button { width: 3; min-width: 3; padding: 0; }
+    Screen.desktop-mini Header, Screen.desktop-mini #mode-toggle { display: none; }
+    Screen.desktop-mini #commands { height: 3; padding: 1 0; background: $surface; }
+    Screen.desktop-mini #transport { width: 12; margin-right: 2; }
+    Screen.desktop-mini #commands-right { width: 23; }
+    Screen.desktop-mini #volume-meter { margin: 0 1; background: $surface; }
+    Screen.desktop-mini #commands Button { width: 4; min-width: 4; background: $surface; }
     """
     BINDINGS = [
         Binding("f2", "settings", "Settings", priority=True),
+        Binding("r", "toggle_mode", "Full/mini"),
         Binding("f4", "panic", "Panic restart", priority=True),
         Binding("space", "toggle", "Play/Pause"),
         Binding("n", "next", "Next"),
@@ -449,6 +477,11 @@ class StreamApp(App):
         self.library = PlaylistLibrary()
         self.preference_store = preference_store if preference_store is not None else PreferenceStore()
         self.preferences = self.preference_store.load()
+        self.ui_mode = 'full'
+        self.desktop_control: SessionChannel | None = None
+        self._desktop_layout = None
+        self._desktop_revision = 0
+        self._desktop_pending = False
         self._ui_timer = None
         self._selection: tuple[list[Style], int, str] | None = None
         self._buttons: dict[str, Button] = {}
@@ -459,7 +492,8 @@ class StreamApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="panel"):
+        yield Button('▾', id='mode-toggle', tooltip='Miniplayer (r) · Settings (F2)')
+        with VerticalScroll(id="panel"):
             with Horizontal(id="title-row"):
                 yield Static(id="title")
                 yield Button("Playlist", id="playlist")
@@ -506,6 +540,9 @@ class StreamApp(App):
         self._panel = self.query_one('#panel')
         self._metadata = self.query_one('#metadata')
         self.apply_preferences(self.preferences)
+        if self.desktop_control is not None and self.desktop_control.stopping():
+            self.exit()
+            return
         self.player.start()
         self._show_model()
         self._tick()
@@ -513,8 +550,106 @@ class StreamApp(App):
             self._request(self.initial_mood)
 
     def on_resize(self, event: events.Resize) -> None:
-        if self.screen_stack:
-            self.screen_stack[0].set_class(self.preferences.compact or event.size.height <= 24, "compact")
+        if hasattr(self, '_root'):
+            self._layout_mode()
+
+    def action_toggle_mode(self) -> None:
+        """Project session navigation onto existing widgets; never touch playback."""
+        if self.screen is not self._root:
+            return
+        self.ui_mode = 'mini' if self.ui_mode == 'full' else 'full'
+        self.set_focus(None)
+        self._layout_mode()
+
+    def _layout_mode(self) -> None:
+        p, mini = self.preferences, self.ui_mode == 'mini'
+        desktop_mini = mini and self.desktop_control is not None
+        small = self.size.height < 20 or self.size.width < 60
+        self._root.set_class(p.compact or self.size.height <= 24, 'compact')
+        self._root.set_class(small, 'small')
+        self._root.set_class(mini, 'mini')
+        self._root.set_class(desktop_mini, 'desktop-mini')
+        toggle = self._root.query_one('#mode-toggle', Button)
+        toggle.label = '▴' if mini else '▾'
+        toggle.tooltip = 'Full player (r) · Settings (F2)' if mini else 'Miniplayer (r) · Settings (F2)'
+        toggle.active_effect_duration = 0
+        for name in ('title-row', 'metadata'):
+            self._root.query_one('#' + name).display = not mini and (name != 'metadata' or p.show_details)
+        for name in ('details', 'mood-line'):
+            self._w[name].display = not mini and p.show_details
+        for name in ('state', 'status'):
+            self._w[name].display = not mini
+        self._w['model'].display = not mini and p.show_model
+        self._mood_input.display = not mini and p.show_input
+        self._footer.display = not mini and p.show_footer
+        self._commands.display = mini or p.show_controls
+        spectrum = self._root.query_one('#spectrum', Spectrum)
+        spectrum.display = mini or p.show_visualizer
+        spectrum.styles.min_height = 1 if mini else 5 if small else p.height
+        # Desktop mini has no inner header; its padded control strip takes three rows.
+        reserved_rows = 3 if desktop_mini else 2
+        spectrum.runtime_height = max(1, self.size.height - reserved_rows) if mini else 5 if small else None
+        self._panel.styles.height = '1fr' if mini or p.show_visualizer else 'auto'
+        self._desktop_invalidate()
+
+    def push_screen(self, *args, **kwargs):
+        self._desktop_invalidate()
+        return super().push_screen(*args, **kwargs)
+
+    def pop_screen(self):
+        self._desktop_invalidate()
+        return super().pop_screen()
+
+    def _desktop_invalidate(self):
+        """Revoke during actual transitions, then measure the refreshed layout."""
+        if self.desktop_control is None or not hasattr(self, '_root'):
+            return
+        self._desktop_layout = self.desktop_control.layout()
+        self._desktop_revision += 1
+        self._desktop_pending = True
+        self._desktop_publish(allow_drag=False)
+        self.call_after_refresh(self._desktop_settled, self._desktop_revision)
+
+    def _desktop_settled(self, revision):
+        # A queued callback from an older transition cannot authorize a new one.
+        if revision != self._desktop_revision:
+            return
+        self._desktop_pending = False
+        self._desktop_publish()
+
+    def _desktop_publish(self, *, allow_drag=True):
+        channel = self.desktop_control
+        if channel is None or not hasattr(self, '_root'):
+            return
+        layout = channel.layout()
+        if layout is None:
+            return
+        epoch, cols, rows = layout
+        regions = []
+        if (allow_drag and not self._desktop_pending and layout == self._desktop_layout and
+                self.ui_mode == 'mini' and self.screen is self._root and
+                (self.size.width, self.size.height) == (cols, rows)):
+            # In mini the panel contains only background and Spectrum. Subtract
+            # the overlay toggle and clip above ALL transport/volume controls.
+            panel = self._panel.region
+            toggle = self._root.query_one('#mode-toggle').region
+            bottom = min(panel.bottom, self._commands.region.y, rows)
+            for y in range(max(0, panel.y), bottom):
+                left, right = max(0, panel.x), min(cols, panel.right)
+                spans = [(left, right)]
+                if toggle.y <= y < toggle.bottom:
+                    spans = [(left, min(right, toggle.x)), (max(left, toggle.right), right)]
+                for x, end in spans:
+                    if end > x:
+                        if regions and regions[-1][0] == x and regions[-1][2] == end-x and regions[-1][1]+regions[-1][3] == y:
+                            regions[-1][3] += 1
+                        else:
+                            regions.append([x, y, end-x, 1])
+            if len(regions) > 64:
+                regions = []  # fail closed at unusually fragmented layouts
+        channel.publish({'epoch': epoch, 'cols': cols, 'rows': rows,
+                         'mode': self.ui_mode, 'theme': self._desktop_theme,
+                         'regions': regions})
 
     def on_unmount(self) -> None:
         self.shell.cancel()  # a running gentle-shell would otherwise keep the process alive after quit
@@ -525,6 +660,18 @@ class StreamApp(App):
 
     # ------------------------------------------------------------ display
     def _tick(self) -> None:
+        if self.desktop_control is not None:
+            if self.desktop_control.stopping():
+                self._keep_playing = False
+                self.exit()
+                return
+            if self.desktop_control.take_toggle():
+                self.action_toggle_mode()
+            if self.desktop_control.layout() != self._desktop_layout:
+                self._desktop_invalidate()
+            else:
+                # Settled polling must not revoke otherwise eligible drag grants.
+                self._desktop_publish()
         w = self._w
         try:
             w["spectrum"].tick()   # first: polling a background player also refreshes what is shown below
@@ -579,6 +726,7 @@ class StreamApp(App):
             return
         p = preferences
         background = {'black': '#000000', 'charcoal': '#202020'}.get(p.theme, p.background)
+        self._desktop_theme = [background, '#f6eff3', p.accent]
         # Textual 8.2.8 doesn't invalidate CSS when the assigned theme name is unchanged.
         # Alternate two registered names, bounding the registry while forcing live refresh.
         theme_name = 'appearance-b' if self.theme == 'appearance-a' else 'appearance-a'
@@ -610,6 +758,7 @@ class StreamApp(App):
             self._ui_timer.stop()
         self._ui_timer = self.set_interval(1 / p.refresh_hz, self._tick)
         self._show_model()
+        self._layout_mode()
 
     def action_settings(self) -> None:
         if not isinstance(self.screen, SettingsScreen):
@@ -623,7 +772,7 @@ class StreamApp(App):
 
     # ------------------------------------------------------------ actions
     def action_back(self) -> None:
-        self._keep_playing = True
+        self._keep_playing = self.desktop_control is None
         self.exit()
 
     def _control(self, action: Callable[[], None]) -> bool:
@@ -666,6 +815,8 @@ class StreamApp(App):
         self._control(lambda: self.player.set_volume((round(self.player.volume * 100) + percent) / 100))
 
     def action_focus_mood(self) -> None:
+        if self.ui_mode == 'mini':
+            return
         self._mood_input.display = True
         self._mood_input.focus()
 
@@ -691,7 +842,8 @@ class StreamApp(App):
         self.push_screen(SaveDialog(style.name, self.library, save))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        actions = {"playlist": self.action_pick_preset, "play": self.action_toggle,
+        actions = {"mode-toggle": self.action_toggle_mode,
+                   "playlist": self.action_pick_preset, "play": self.action_toggle,
                    "next": self.action_next, "previous": self.action_previous, "panic": self.action_panic,
                    "mood-command": self.action_focus_mood,
                    "model-command": self.action_settings, "save-command": self.action_save_preset,

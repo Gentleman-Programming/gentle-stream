@@ -40,7 +40,14 @@ async def test_spectrum_cache_preserves_previous_render_and_one_poll():
         assert cached is not None
         cached[:] = 0
         np.testing.assert_array_equal(spectrum.cached_sample, levels)
+        # Runtime bounding is opt-in; removing it restores the original minimum.
+        spectrum.runtime_height = 2
+        spectrum.tick()
+        assert len(spectrum.render().plain.splitlines()) == 2
+        spectrum.runtime_height = None
+        spectrum.tick()
+        assert str(spectrum.render()) == str(render_spectrum(levels, 5, Preferences(), columns=48))
         spectrum.display = False
         spectrum.tick()
-        assert player.spectrum.call_count == 2
+        assert player.spectrum.call_count == 4
         np.testing.assert_array_equal(spectrum.cached_sample, levels)
