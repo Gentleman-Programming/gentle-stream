@@ -1,0 +1,31 @@
+{
+  "result": "offline-assets-verified",
+  "packages": [
+    {
+      "package": "@xterm/xterm",
+      "version": "6.0.0",
+      "license": "MIT",
+      "tarball_url": "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz",
+      "archive_integrity": "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==",
+      "archive_sha256": "908e66e04af6c8dc6b00dd3b54de088e2e81e5ed866284fd6c2fb3c2d1c7a3f6",
+      "files_sha256": {
+        "xterm.js": "14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972",
+        "xterm.css": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+        "licenses/xterm-LICENSE": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd"
+      }
+    },
+    {
+      "package": "@xterm/addon-fit",
+      "version": "0.11.0",
+      "license": "MIT",
+      "tarball_url": "https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz",
+      "archive_integrity": "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==",
+      "archive_sha256": "26003b4517a132b64e4ff228fd88a5fda3fff5e606c76093f6dcff772e9ecec0",
+      "files_sha256": {
+        "addon-fit.js": "ba3ea256ce0620a0992a197d6c9baea64823fc93d8da07a9e366ca9943c18527",
+        "licenses/addon-fit-LICENSE": "e256f01188af527e4d06d21d06fbf785ae9c50d4b328bf03cbe0ba7f0aa4228f"
+      }
+    }
+  ],
+  "runtime_execution": "not tested"
+}
