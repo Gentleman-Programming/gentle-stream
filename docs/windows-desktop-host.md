@@ -1,9 +1,60 @@
-# Windows desktop host (H1 candidate — not integrated)
+# Optional Windows desktop window
 
-This optional host wraps terminal cells, not a second HTML player. It has no
-transport, player, audio, daemon, model, Gentle Shell or app imports. Normal CLI
-and Linux imports do not load pywebview/pythonnet. Packaging and controller
-integration belong to T15; this is **not** a working desktop launch command.
+Install the optional `gentle-stream[desktop]` extra on **native Windows** with
+Microsoft Edge WebView2 Runtime available, then run:
+
+```powershell
+gentle-stream --desktop
+gentle-stream --desktop --model=provider/id --gentle-shell="C:/path with spaces/gentle-shell.mjs"
+```
+
+This opt-in wraps the **real StreamApp** in one persistent ConPTY, not an HTML
+player clone. The header button and nonpriority **r** transform the same owned
+frameless Form into a fixed, always-on-top mini window and back. Background and
+Spectrum cells are draggable with held left-click; all controls and modal cells
+are excluded. Mini position is remembered for this window's lifetime, not saved
+in appearance.json. Full bounds are restored by the existing host. Desktop mini
+shows one window header above the spectrum and groups playback and volume controls
+on a separate strip. Full and ordinary terminal layouts are unchanged. Settings
+use the existing draft/Save/Cancel behavior: only applied preferences color the host.
+
+`--mood`, `--model`, and `--gentle-shell` are forwarded as argv list entries,
+including spaces and leading hyphens. `--desktop` conflicts with `--compact`,
+all window-launcher options, and subcommands. Non-Windows requests fail with an
+actionable message before native imports. Ordinary terminal, standalone compact,
+and Hyprland launches are unchanged; none requires desktop dependencies.
+
+Normal window close (also b/q in desktop mode) stops the attached music using
+StreamApp's existing unmount helpers. The controller waits for actual child exit,
+output drain and reader join before acknowledging Form close. After a close
+request, final terminal bytes drain to a discard sink because H1 intentionally
+rejects new display output while closing. Fatal renderer failure closes the
+renderer immediately, requests owned child/music shutdown asynchronously, and
+keeps the supervisor alive for the bounded cleanup result. Failure/uncertainty
+returns nonzero, never a normal close ACK. No implicit quit key or PID kill is
+used. Early shutdown exists before spawn and cannot be lost on a late start.
+
+A small private per-session directory carries nonce-bound, bounded JSON records;
+PTY output is never parsed as control. Epoch/grid/rectangle checks reject stale
+or malformed frames, with grants revoked before output and renewed only after
+xterm's write ACK. Session directories and native browser profiles are retained
+for parent-owned cleanup, especially on uncertain exit; they contain no recorded
+terminal output or prompts. The offline xterm 6.0.0 and fit 0.11.0 JS/CSS, exact
+provenance and MIT notices ship inside `gentle_stream/desktop_assets`. uv_build
+includes module data alongside Python sources; no runtime download/server/CDN.
+Pinned Windows-only extra: pywebview 6.2.1, pythonnet 3.2.1, pywinpty 3.1.2.
+
+The isolated native probe and the latest real-player trial are documented in the
+[checkpoint and follow-up](windows-desktop-next.md). The integrated probe uses a
+mock player with the real App/window/PTY; it does not prove audible playback or
+all human acceptance checks.
+
+## H1 foundation interface and retained verification history
+
+The host itself has no transport/player/model imports; session integration lives
+in desktop_session.py and desktop_control.py. Normal CLI and Linux imports do
+not load pywebview/pythonnet. The historical notes below describe the isolated
+H1 component and earlier failures, not the current integration's proof status.
 
 ## Direction and ownership
 

@@ -5,7 +5,11 @@ binding, including inside an input, and remains available with the controls, moo
 input, visualizer, details and footer hidden. The command palette also includes
 **Settings**. Its muted description separates visual controls from model choice; the
 model picker explains that its selection affects future moods, not current playback.
-Use Tab/Shift+Tab to navigate. Settings shows a read-only miniature of the full
+Use Tab/Shift+Tab to navigate. The top-right button or **r** switches the running
+player between full and mini content; this is separate from Compact spacing.
+See [interface modes](interface-modes.md). Settings always previews the full player,
+with a static, noninteractive header-toggle facsimile. At 40×8 and 60×12 the form
+scrolls and a one-row action strip stays reachable; secondary descriptions are hidden. Settings shows a read-only miniature of the full
 player beside the form at wide sizes (120×30 and 140×40). At 80×24 and 60×20,
 the form and miniature stack in a scrollable body; status and actions stay outside
 that scroll. The miniature includes track details, mood, spectrum, playback state,

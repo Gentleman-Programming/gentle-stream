@@ -122,6 +122,16 @@ uv run gentle-stream
 
 It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; valid edits and theme highlights update a read-only full-player miniature beside the form (stacked and scrollable on narrow terminals), without changing the real player until Save. `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
 
+**Optional native Windows desktop:** with `gentle-stream[desktop]` and Edge
+WebView2 Runtime, run `gentle-stream --desktop`. The same App/player transforms
+between full and fixed always-on-top frameless mini using the button or `r`;
+background/Spectrum drag excludes controls. Close stops music. This opt-in is
+incompatible with compact/window-launcher options and subcommands. For the
+current evidence and remaining acceptance checks, see the
+[Windows desktop checkpoint](docs/windows-desktop-next.md),
+[Windows desktop host](docs/windows-desktop-host.md) and
+[interface modes](docs/interface-modes.md).
+
 For just a visualizer and one row of playback/volume controls, run `gentle-stream --compact`.
 On Hyprland, `--window-mode window` opens the full UI in Kitty; `--window-mode floating
 --window-size 360x180` opens the compact player. See [Hyprland windows and compact player](docs/hyprland.md)

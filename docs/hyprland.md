@@ -1,6 +1,9 @@
 # Hyprland windows and compact player
 
 Bare `gentle-stream` still opens the full UI in your current terminal.
+Its top-right button or **r** switches full/mini content within the same session,
+without resizing the OS window or restarting playback. This is distinct from the
+standalone startup compact surface described below; see [interface modes](interface-modes.md).
 
 ```sh
 gentle-stream --window-mode window --window-size 1000x700
