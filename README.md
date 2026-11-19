@@ -94,6 +94,8 @@ Only describing a mood calls a model. The status line shows what that call used,
 
 ## Get started
 
+See [platform setup and audio verification](docs/platform-support.md) for the Linux, macOS, WSL2, and native Windows paths.
+
 **Requirements**
 
 | You need | Why |

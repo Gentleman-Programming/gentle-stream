@@ -29,6 +29,19 @@ POSIX preflight imports sounddevice and reports PortAudio's version; this can
 initialize the host backend, but the tests use fake streams, not an output
 device. Native preflight uses `importlib.metadata` without importing sounddevice
 or fluidsynth, and asserts `sys.platform == "win32"` and Python 3.13.
+Each job checks the declared OS and CPU architecture (Linux x64, macOS ARM64,
+WSL2 x64 or Windows x64). `scripts/check_ci_platform.py verify` also checks that
+Git's checkout root and `HEAD` match the run's `GITHUB_SHA`, including in the
+WSL copy. This can be a GitHub-generated merge commit on pull-request runs.
+The Windows host logs `wsl --list --verbose`; inside Linux the gate requires a
+Microsoft WSL2 kernel and Ubuntu 24.04.
+
+The POSIX jobs use the console script installed by the frozen sync from an
+isolated directory. `--help` must succeed cleanly, and `ctl --json status`
+must emit the exact no-player success line with exit 0 and empty stderr. The
+native Windows job uses source-based CLI checks, not an installed launcher.
+These checks never establish audible output; use the
+[manual audio and terminal checklist](platform-support.md#check-the-terminal-and-actual-sound).
 OS packages and Python patch releases can change; this is not a hermetic image.
 
 ## Correctness and performance selection
