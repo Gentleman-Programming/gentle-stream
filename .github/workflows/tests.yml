@@ -34,6 +34,9 @@ jobs:
           version: "0.12.10"
           enable-cache: false
       - name: Run device-free native and portable contracts
+        env:
+          CI_PLATFORM: Windows
+          CI_ARCH: x64
         run: |
           $scratch = Join-Path $env:RUNNER_TEMP ("gs-native-" + [guid]::NewGuid())
           New-Item -ItemType Directory -Force $scratch | Out-Null
@@ -52,11 +55,17 @@ jobs:
           uv sync --python 3.13 --frozen --no-install-project --no-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $python = "$scratch/venv/Scripts/python.exe"
+          & $python scripts/check_ci_platform.py verify $env:CI_PLATFORM $env:CI_ARCH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c 'import sys; from importlib.metadata import version; assert sys.platform == "win32"; assert sys.version_info[:2] == (3, 13); print(sys.version); print({name: version(name) for name in ("sounddevice", "pyfluidsynth", "pytest")}); assert not any(name in sys.modules for name in ("sounddevice", "_sounddevice", "fluidsynth"))'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Native uses frozen dependencies without installing/building the project; this is source-only.
           & $python -m gentle_stream --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -m pytest -q tests/test_native_windows.py tests/test_daemon.py tests/test_bridge.py tests/test_voice_free_delivery.py tests/test_music_panic.py tests/test_ui_toolbar_contracts.py tests/test_ui_save_contracts.py tests/test_ui_picker_contracts.py tests/test_ui_transport_contracts.py tests/test_genres_contract.py tests/test_performance_selection.py -o "cache_dir=$scratch/pytest-cache" --basetemp="$scratch/pytest-temp"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Keep this source CLI lane to the machine contract (no sample installs or daemon fixtures).
+          & $python -m pytest -q tests/test_main.py -k 'test_ctl_ and (json or test_ctl_status_still_never_starts_a_player)' -o "cache_dir=$scratch/pytest-cache" --basetemp="$scratch/cli-temp"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Only this mocked host regression is portable; the real-pipe module is POSIX.
           & $python -m pytest -q tests/test_pause_output.py::test_host_pause_delivers_stop_with_full_pending_queue -o "cache_dir=$scratch/pytest-cache" --basetemp="$scratch/queue-temp"
@@ -72,14 +81,18 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
+        # Other OS/architecture combinations are unverified; keep the proven runner labels.
         include:
           - platform: Linux
+            arch: x64
             runner: ubuntu-24.04
             shell: bash
           - platform: macOS
+            arch: arm64
             runner: macos-15
             shell: bash
           - platform: WSL
+            arch: x64
             runner: windows-latest
             shell: wsl-bash {0}
     defaults:
@@ -100,7 +113,13 @@ jobs:
           set-as-default: "true"
           use-cache: "false"
           update: "true"
-          additional-packages: libportaudio2 python3-venv ca-certificates
+          additional-packages: libportaudio2 python3-venv ca-certificates git
+      - name: Log Windows host WSL distributions and versions
+        if: matrix.platform == 'WSL'
+        shell: pwsh
+        run: |
+          wsl.exe --list --verbose
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install Linux PortAudio library
         if: matrix.platform == 'Linux'
         run: |
@@ -115,9 +134,14 @@ jobs:
         with:
           version: "0.11.14"
           enable-cache: false
-      - name: Install frozen dependencies and run correctness tests
+      - name: Verify the runner and checkout, smoke the installed CLI, and run correctness tests
+        env:
+          CI_PLATFORM: ${{ matrix.platform }}
+          CI_ARCH: ${{ matrix.arch }}
+          # Pass only these declared values and the GitHub-provided SHA from Windows to WSL.
+          WSLENV: CI_PLATFORM:CI_ARCH:GITHUB_SHA
         run: |
-          platform='${{ matrix.platform }}'
+          set -euo pipefail
           # Short system-temp roots keep macOS AF_UNIX socket paths within limits.
           scratch="$(mktemp -d /tmp/gs-ci-XXXXXX)"
           export PYTHONDONTWRITEBYTECODE=1
@@ -134,14 +158,10 @@ jobs:
           export PYTEST_ADDOPTS="-o cache_dir=$scratch/pytest-cache --basetemp=$scratch/pytest-temp"
           mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" "$TMPDIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          if [[ "$platform" == WSL ]]; then
+          if [[ "$CI_PLATFORM" == WSL ]]; then
             # Move off DrvFS: sockets, executable fake scripts and mode bits need POSIX paths.
             cp -R . "$scratch/repo"
             cd "$scratch/repo"
-            test "$(uname -s)" = Linux
-            grep -qi microsoft /proc/sys/kernel/osrelease
-            . /etc/os-release
-            test "$ID:$VERSION_ID" = ubuntu:24.04
             python3 -m venv "$scratch/bootstrap"
             "$scratch/bootstrap/bin/python" -m pip install --only-binary=:all: uv==0.11.14
             export PATH="$scratch/bootstrap/bin:$PATH"
@@ -150,6 +170,9 @@ jobs:
           uv --version
           uv python install 3.13
           uv sync --frozen --python 3.13
+          # WSL checks the copied checkout that supplies the actual source and tests.
+          "$scratch/venv/bin/python" scripts/check_ci_platform.py verify "$CI_PLATFORM" "$CI_ARCH"
+          "$scratch/venv/bin/python" scripts/check_ci_platform.py smoke "$scratch/venv/bin/gentle-stream" "$scratch/smoke"
           uv run --frozen --no-sync python -c 'import sys, sounddevice; assert sys.version_info[:2] == (3, 13); print(sys.version); print(sys.platform); print(sounddevice.get_portaudio_version())'
           # Full default correctness includes the COMPLETE real-pipe pause module on Linux.
           uv run --frozen --no-sync pytest
