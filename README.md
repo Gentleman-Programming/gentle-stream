@@ -3,7 +3,7 @@
 
 <div align="center">
 
-<img src="docs/assets/launcher-icon.png" width="112" height="112" alt="gentle-stream launcher icon: rose spectrum bars on a dark background" />
+<img src="docs/assets/rose-wave-logo.png" width="112" height="112" alt="gentle-stream logo: a pink rose above audio spectrum bars" />
 
 <h1>gentle-stream</h1>
 
