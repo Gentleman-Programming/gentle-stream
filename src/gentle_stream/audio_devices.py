@@ -53,10 +53,12 @@ def output_devices(query=None) -> list[Device]:
         raise DeviceError(f"cannot list the audio devices: {error}") from error
 
 
-def find(name: str, devices: list[Device]) -> Device | None:
-    """Resolve a stored name exactly (ignoring case), never by a partial match."""
+def find(name: str, devices: list[Device], *, unique: bool = False) -> Device | None:
+    """Match an exact name ignoring case; require uniqueness when restoring a saved name."""
     key = name.casefold()
-    return next((device for device in devices if device.name.casefold() == key), None)
+    matches = (device for device in devices if device.name.casefold() == key)
+    first = next(matches, None)
+    return None if unique and next(matches, None) is not None else first
 
 
 def resolve(spec: str | int, devices: list[Device]) -> Device:

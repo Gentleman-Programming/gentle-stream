@@ -33,6 +33,34 @@ def test_devices_round_trip_and_rejected_choices_leave_output_untouched(output_s
     assert client.device is None and factory.streams[-1].kw.get("device") is None
 
 
+def test_explicit_default_reopens_on_the_current_os_default(output_session):
+    player, factory = output_session
+    client = PlayerClient(LocalConnection(player))
+    client.pause()
+    client.set_volume(.37)
+    old, = factory.streams
+    assert old.active and old.destination == 1 and client.device is None
+    before = (player.position, player.buffered_seconds, player.underruns, player.output_underflows)
+    factory.default_index = 4
+
+    client.set_device(None)
+
+    assert client.device is None and client.device_missing is None and not client.playing and client.volume == .37
+    active, = [stream for stream in factory.streams if stream.active]
+    assert active.destination == 4 and old.closed
+    assert (player.position, player.buffered_seconds, player.underruns, player.output_underflows) == before
+
+
+def test_reselecting_the_same_explicit_device_keeps_its_stream(output_session):
+    player, factory = output_session
+    client = PlayerClient(LocalConnection(player))
+    client.set_device(4)
+    old = factory.streams[-1]
+    client.set_device("USB Speakers")
+    assert len(factory.streams) == 2 and old.active and old.destination == 4
+    assert client.device == "USB Speakers" and client.playing
+
+
 def test_client_refreshes_stopped_state_when_both_outputs_fail(output_session):
     player, factory = output_session
     client = PlayerClient(LocalConnection(player))

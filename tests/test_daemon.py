@@ -61,6 +61,23 @@ def fake_devices(device=None, kind=None):
             {"index": 4, "name": "USB Speakers", "max_output_channels": 2}]
 
 
+def duplicate_usb_devices(device=None, kind=None):
+    if kind == "output":
+        return fake_devices(device, kind)
+    return [*fake_devices(), {"index": 7, "name": "USB Speakers", "max_output_channels": 2}]
+
+
+class DestinationRecordingAudio(FakeAudio):
+    def __init__(self, *, device=None, **kwargs):
+        super().__init__(**kwargs)
+        self.destination = duplicate_usb_devices(kind="output")["index"] if device is None else device
+
+    def start(self):
+        with (Path(os.environ["XDG_RUNTIME_DIR"]) / "destinations").open("a", encoding="utf-8") as log:
+            print(self.destination, file=log)
+        super().start()
+
+
 def built_in_only(device=None, kind=None):
     return fake_devices(device, kind) if kind == "output" else fake_devices()[:2]
 
@@ -492,6 +509,25 @@ def test_output_preference_survives_daemon_restart_and_reports_missing_device(ru
     fallback.set_device(None)
     assert (fallback.device, fallback.device_missing, fallback.playing) == (None, None, True)
     assert load_choice() is None
+
+
+def test_daemon_does_not_restart_on_the_first_of_two_outputs_with_the_saved_name(runtime, monkeypatch):
+    from gentle_stream import client
+    from gentle_stream.audio_devices import load_choice
+
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:duplicate_usb_devices")
+    monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:DestinationRecordingAudio")
+    destinations = runtime.parent / "destinations"
+    first = client.ensure()
+    first.set_device(7)
+    assert destinations.read_text(encoding="utf-8").splitlines() == ["1", "7"]
+    assert first.device == "USB Speakers" and load_choice() == "USB Speakers"
+    first.close()
+
+    fresh = client.ensure()
+    assert destinations.read_text(encoding="utf-8").splitlines() == ["1", "7", "1"]
+    assert (fresh.device, fresh.device_missing, fresh.playing) == (None, "USB Speakers", True)
+    assert load_choice() == "USB Speakers"
 
 
 def test_daemon_starts_on_default_when_remembered_output_is_busy(runtime, monkeypatch):

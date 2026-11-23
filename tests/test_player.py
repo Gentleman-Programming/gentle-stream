@@ -229,12 +229,14 @@ class SwitchOutput(FakeStream):
 class OutputFactory:
     def __init__(self):
         self.streams, self.fail = [], {}
+        self.default_index = 1
 
     def __call__(self, **kw):
         device = kw.get("device")
         if self.fail.get(device) == "open":
             raise OSError(f"open failed for {device}")
         stream = SwitchOutput(fail_start=self.fail.get(device) == "start", **kw)
+        stream.destination = self.default_index if device is None else device
         self.streams.append(stream)
         return stream
 

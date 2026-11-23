@@ -112,7 +112,7 @@ class Player:
             try:
                 if remembered:
                     try:
-                        selected = audio_devices.find(remembered, self.devices())
+                        selected = audio_devices.find(remembered, self.devices(), unique=True)
                     except DeviceError:
                         selected = None
                     if selected is not None:
@@ -218,7 +218,8 @@ class Player:
             if self._producer.ident is None and self._stream is None:
                 self._device = selected  # Before start, choose the target without saving an untested output.
                 return
-            if not had_output or selected != self._device:
+            # PortAudio binds the system default at open time, so None must reopen even if unchanged.
+            if selected is None or not had_output or selected != self._device:
                 with self._callback_lock:
                     self._generation += 1
                     self._gain = self.level = 0.0
