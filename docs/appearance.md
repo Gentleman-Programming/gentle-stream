@@ -8,7 +8,8 @@ or press **p**.
 
 Settings groups fields into **Appearance**, **Visualizer** and **Layout**. Use
 **Tab** / **Shift+Tab** to move between controls. On small terminals the form
-scrolls while the model picker and action buttons stay in view.
+scrolls while **Audio output…** and **Choose mood model…** stay above the form.
+On narrow terminals the two picker buttons stack to keep both labels visible.
 
 - **Preview** validates the whole form and applies it immediately without saving.
 - **Save & close** validates and atomically saves the whole form, applies it, then
@@ -24,6 +25,20 @@ The player’s model line shows the selected model. **Choose mood model…** ope
 the model picker from Settings; **m** goes directly to it from the player. Opening Settings or changing appearance does not list models,
 interpret moods, synthesize speech, or call playback controls. Model choice does not
 change musical parameters. Submitting the separate mood input still interprets a mood.
+
+## Audio output
+
+Choose **Audio output…** in Settings or press **o** from the player. Use **↑/↓**
+to highlight an output and **Enter** to switch without restarting the app. **Esc**
+closes the picker without changing the output if you haven't submitted a switch.
+Choose **System default** to use the OS default without changing it. If the last
+selected device is missing and the player falls back to the system default, the
+picker reports that fallback. A failed switch is shown in the picker so you can
+try another device. The picker doesn't switch the audio backend and is unavailable
+with the optional WSL Windows audio bridge.
+
+Audio output is applied separately; you don't need **Save & close**. Closing
+Settings or discarding an appearance preview won't undo an output switch.
 
 ## Bounded settings
 

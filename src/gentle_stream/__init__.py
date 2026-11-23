@@ -13,9 +13,12 @@ CONTROLS = """controls:
            recovery does not guarantee to fix stutter; reopen failures are shown, not Playing.
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
   Ctrl+P   open the command palette (also clickable in the header)
-  F2       Settings: live appearance, visibility, and explicit mood model selection
+  F2       Settings: live appearance, visibility, audio output, and mood model selection
            always available, even with hidden controls/input/footer; also in the command palette
   m        choose the model Gentle Shell uses directly
+  o        choose this app's audio output (also in Settings)
+           Enter switches without restarting the app; Esc closes before selection.
+           System default follows the OS default without changing it.
   s        save what is playing: Saved prompts, new playlist, or existing playlist
   p        Playlist (also on the command strip): My playlist / Default playlist
            My playlist opens groups, then songs in the same panel; Backspace goes back
@@ -52,7 +55,8 @@ native Windows (no WSL):
 
 optional Windows audio bridge (WSL only):
   GENTLE_STREAM_AUDIO_OUTPUT=windows gentle-stream streams live PCM to Windows FFplay.
-  sounddevice remains the default. Stop an existing player before selecting a different output.
+  sounddevice remains the default. Stop an existing player before changing the backend.
+  The audio output picker is unavailable with the Windows audio bridge.
   See docs/windows-wsl.md for Windows Python/FFplay paths and diagnostics.
 
 saved prompts live in $XDG_CONFIG_HOME/gentle-stream/presets.json (default ~/.config/gentle-stream/).

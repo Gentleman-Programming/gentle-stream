@@ -77,8 +77,16 @@ async def test_settings_keeps_fields_and_actions_legible(ui, size):
         scroll = screen.query_one(VerticalScroll)
         for key in ('theme', 'background', 'accent', 'style', 'palette', 'height'):
             assert scroll.content_region.contains_region(screen.query_one('#pref-' + key).region), key
+        header = screen.query_one('#settings-header')
+        assert header.region.height == 1
+        for selector in ('#settings-output', '#settings-model'):
+            button = header.query_one(selector, Button)
+            assert header.content_region.contains_region(button.region)
+            assert button.content_region.width >= len(str(button.label))
+        assert header.query_one('#settings-model').region.right == header.content_region.right
         fields = [row.children[-1].region for row in screen.query('.setting-row')]
         assert len({(field.x, field.width, field.height) for field in fields}) == 1
+        assert fields[0].width == 16 and fields[0].right == scroll.content_region.right - 1
         assert all(lower.y > upper.bottom for upper, lower in zip(fields, fields[1:]))
         actions = screen.query_one('#settings-actions')
         assert [str(button.label) for button in actions.query(Button)] == [
@@ -87,6 +95,44 @@ async def test_settings_keeps_fields_and_actions_legible(ui, size):
         for button in actions.query(Button):
             assert actions.content_region.contains_region(button.region)
             assert button.content_region.width >= len(str(button.label))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('width', [36, 40, 44])
+async def test_narrow_settings_keeps_both_pickers_visible_and_clickable(ui, width):
+    from gentle_stream.app import ModelPicker
+    from gentle_stream.device_ui import DevicePicker
+
+    app, player, shell, *_ = ui
+    player.device = player.device_missing = None
+    player.devices.return_value = []
+    async with app.run_test(size=(width, 20)) as pilot:
+        await pilot.press('f2')
+        settings = app.screen
+        header = settings.query_one('#settings-header')
+        for key, label, picker in (
+            ('model', 'Choose mood model…', ModelPicker),
+            ('output', 'Audio output…', DevicePicker),
+        ):
+            button = header.query_one(f'#settings-{key}', Button)
+            assert str(button.label) == label
+            assert header.content_region.contains_region(button.region), (width, key)
+            assert button.content_region.width >= len(label)
+            assert await pilot.click(button, offset=(1, 0))
+            assert isinstance(app.screen, picker)
+            await app.workers.wait_for_complete()
+            await pilot.press('escape')
+            assert app.screen is settings
+        assert header.region.height == 2
+        await pilot.resize_terminal(80, 24)
+        assert header.region.height == 1
+        await pilot.resize_terminal(width, 20)
+        assert header.region.height == 2
+        shell.list_models.assert_called_once()
+        shell.interpret_with_usage.assert_not_called()
+        player.devices.assert_called_once()
+        player.set_device.assert_not_called()
+        assert not app.preference_store.path.exists()
 
 
 @pytest.mark.asyncio
@@ -265,7 +311,7 @@ async def test_settings_and_model_menus_explain_context_without_changing_music(u
         before = [call for call in player.mock_calls if call[0] != 'spectrum']
         await pilot.press('f2')
         assert isinstance(app.screen, SettingsScreen)
-        assert 'music is unchanged' in shown(app, '#settings-description')
+        assert 'Appearance previews do not change the music.' == shown(app, '#settings-description')
         assert await pilot.click('#settings-model')
         await pilot.pause()  # the pushed screen mounts on the next event-loop turn
         assert isinstance(app.screen, ModelPicker)

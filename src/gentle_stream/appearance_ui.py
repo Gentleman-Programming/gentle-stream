@@ -2,6 +2,7 @@
 from dataclasses import asdict
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -42,6 +43,9 @@ class SettingsScreen(ModalScreen):
     SettingsScreen > Vertical { width: 68; max-width: 100%; height: 32; max-height: 92%;
         border: round $primary; padding: 0 2; background: $surface; }
     SettingsScreen #settings-header, SettingsScreen #settings-actions { height: 1; }
+    SettingsScreen #settings-pickers { width: auto; height: 1; }
+    SettingsScreen.narrow #settings-header, SettingsScreen.narrow #settings-pickers { height: 2; }
+    SettingsScreen.narrow #settings-pickers { layout: vertical; align-horizontal: right; }
     SettingsScreen #settings-title { width: 1fr; color: $foreground; text-style: bold; }
     SettingsScreen #settings-description, SettingsScreen #settings-status { color: $text-muted; }
     SettingsScreen #settings-status { height: auto; margin: 1 0; }
@@ -76,8 +80,10 @@ class SettingsScreen(ModalScreen):
         with Vertical():
             with Horizontal(id='settings-header'):
                 yield Static('Settings', id='settings-title')
-                yield Button('Choose mood model…', id='settings-model', compact=True)
-            yield Static('Appearance only; music is unchanged.', id='settings-description')
+                with Horizontal(id='settings-pickers'):
+                    yield Button('Audio output…', id='settings-output', compact=True)
+                    yield Button('Choose mood model…', id='settings-model', compact=True)
+            yield Static('Appearance previews do not change the music.', id='settings-description')
             with VerticalScroll():
                 for section, keys in SECTIONS:
                     yield Static(section, classes='setting-section')
@@ -99,6 +105,10 @@ class SettingsScreen(ModalScreen):
                 for label, key in [('Preview', 'preview'), ('Defaults', 'defaults'),
                                    ('Close', 'close'), ('Save & close', 'save')]:
                     yield Button(label, id='settings-' + key, compact=True)
+
+    def on_resize(self, event: events.Resize) -> None:
+        # Eight title cells, 17 + 22 for the buttons, and six for the modal frame.
+        self.set_class(event.size.width < 53, 'narrow')
 
     def read_preferences(self) -> Preferences:
         values = {}
@@ -124,6 +134,9 @@ class SettingsScreen(ModalScreen):
             return
         if action == 'model':
             self.owner.action_pick_model()
+            return
+        if action == 'output':
+            self.owner.action_pick_output()
             return
         try:
             preferences = Preferences() if action == 'defaults' else self.read_preferences()

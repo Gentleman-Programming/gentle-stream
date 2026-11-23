@@ -9,6 +9,7 @@ be saved under a name and applied later, instantly, without asking Gentle Shell 
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import time
 
@@ -26,6 +27,7 @@ from textual.worker import get_current_worker
 
 from .appearance import Preferences, PreferenceStore
 from .appearance_ui import SettingsScreen
+from .device_ui import DevicePicker, missing_output
 from .visualizer import Spectrum
 from .volume_meter import render_volume_meter
 from .bridge import GentleShell, InterpretError, Usage
@@ -425,6 +427,7 @@ class StreamApp(App):
         Binding("n", "next", "Next", show=False),
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
+        Binding("o", "pick_output", "Audio output", show=False),
         Binding("s", "save_preset", "Save", show=False),
         Binding("p", "pick_preset", "Playlist", show=False),
         Binding("c", "continuous", "Repeat list", show=False),
@@ -446,6 +449,7 @@ class StreamApp(App):
         self.preference_store = preference_store if preference_store is not None else PreferenceStore()
         self.preferences = self.preference_store.load()
         self._ui_timer = None
+        self._output_busy = False
         self._selection: tuple[list[Style], int, str] | None = None
         self._buttons: dict[str, Button] = {}
         self.session_usage: Usage | None = None  # tokens and cost of every successful interpretation so far
@@ -478,7 +482,7 @@ class StreamApp(App):
                 yield Button("-", id="quieter", tooltip="Volume down 5% (-); Down: 1%")
                 yield Static(id="volume-meter")
                 yield Button("+", id="louder", tooltip="Volume up 5% (+); Up: 1%")
-                yield Button("Settings", id="settings-command", tooltip="Appearance and mood model (F2)")
+                yield Button("Settings", id="settings-command", tooltip="Appearance, audio output and mood model (F2)")
         yield Input(placeholder="Describe a mood… Enter sends, Esc leaves", id="mood")
         yield Footer(show_command_palette=False)
 
@@ -504,6 +508,9 @@ class StreamApp(App):
         self._tick()
         if self.initial_mood:
             self._request(self.initial_mood)
+        missing = getattr(self.player, 'device_missing', None)
+        if isinstance(missing, str) and missing:
+            self._status(escape(missing_output(missing)))
 
     def on_resize(self, event: events.Resize) -> None:
         if self.screen_stack:
@@ -518,6 +525,8 @@ class StreamApp(App):
 
     # ------------------------------------------------------------ display
     def _tick(self) -> None:
+        if self._output_busy:
+            return  # a synchronous poll would wait for the device request on the same connection
         w = self._w
         try:
             w["spectrum"].tick()   # first: polling a background player also refreshes what is shown below
@@ -594,22 +603,35 @@ class StreamApp(App):
         self._show_model()
 
     def action_settings(self) -> None:
-        if not isinstance(self.screen, SettingsScreen):
+        if not isinstance(self.screen, (SettingsScreen, DevicePicker)):
             self.push_screen(SettingsScreen(self))
 
     def get_system_commands(self, screen):
         from textual.app import SystemCommand
         yield from super().get_system_commands(screen)
-        yield SystemCommand('Settings', 'Appearance and mood model (F2)', self.action_settings)
+        yield SystemCommand('Settings', 'Appearance, audio output and mood model (F2)', self.action_settings)
         yield SystemCommand('Panic restart', 'Hard cut and restart current track, no AI (F4)', self.action_panic)
 
     # ------------------------------------------------------------ actions
     def action_back(self) -> None:
-        self._keep_playing = True
-        self.exit()
+        if self._output_ready():
+            self._keep_playing = True
+            self.exit()
+
+    async def action_quit(self) -> None:
+        if self._output_ready():
+            await super().action_quit()
+
+    def _output_ready(self) -> bool:
+        if self._output_busy:
+            self.notify('Wait for the audio output request to finish.')
+            return False
+        return True
 
     def _control(self, action: Callable[[], None]) -> bool:
         """Both keyboard and buttons report rejected controls without claiming success."""
+        if not self._output_ready():
+            return False
         try:
             action()
         except (ValueError, PlayerError) as e:
@@ -620,6 +642,8 @@ class StreamApp(App):
         return True
 
     def action_panic(self) -> None:
+        if not self._output_ready():
+            return
         self.workers.cancel_group(self, "interpret")
         if self._control(self.player.panic):
             self._status("Current track restarted from the beginning · same settings · no AI call.")
@@ -661,6 +685,35 @@ class StreamApp(App):
 
         self.push_screen(ModelPicker(self.shell), chosen)
 
+    def action_pick_output(self) -> None:
+        if isinstance(self.screen, DevicePicker) or not self._output_ready():
+            return
+        origin = self.screen
+
+        def switched(label: str | None) -> None:
+            if label is not None:
+                self._status(f'Output: {escape(label)}')
+                if isinstance(origin, SettingsScreen) and self.screen is origin:
+                    origin.show_status(f'Output: {label}')
+
+        self.push_screen(DevicePicker(self), switched)
+
+    def run_output_operation(self, operation: Callable, completed: Callable) -> None:
+        # App-owned: cancelling the modal must not resume polling while its request still holds the connection.
+        self._output_busy = True
+        self._run_output_operation(operation, completed)
+
+    @work(group='output')
+    async def _run_output_operation(self, operation: Callable, completed: Callable) -> None:
+        try:
+            result = await asyncio.to_thread(operation)
+        except Exception as error:
+            self._output_busy = False
+            completed(None, error)
+        else:
+            self._output_busy = False
+            completed(result, None)
+
     # ------------------------------------------------------------ saved prompts
     def action_save_preset(self) -> None:
         style = self.player.now.style  # what is audible, captured before the dialog opens
@@ -685,7 +738,7 @@ class StreamApp(App):
         picker = PresetPicker(self.presets, self.library)
 
         def chosen(preset: Preset | None) -> None:
-            if preset is None:
+            if preset is None or not self._output_ready():
                 return
             self.workers.cancel_group(self, "interpret")  # a late interpretation must not override the choice
             selection = ([p.style for p in picker.songs], picker.selected_index, picker.selection_name)
@@ -720,6 +773,8 @@ class StreamApp(App):
         self._tick()
 
     def action_continuous(self) -> None:
+        if not self._output_ready():
+            return
         if self.player.continuous is not True:
             self._start_continuous()
             return
@@ -767,6 +822,8 @@ class StreamApp(App):
         # event-loop turn. A worker cannot pass a check then apply after Panic.
         if worker.is_cancelled:
             return True
+        if self._output_busy:
+            return False
         try:
             committed = commit()  # never waits for preparation or a render lock
         except (ValueError, PlayerError, ConnectionError) as e:

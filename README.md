@@ -122,7 +122,7 @@ cd gentle-stream
 uv run gentle-stream
 ```
 
-It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to change appearance and open model selection without restarting music; `m` still opens model selection directly. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
+It starts playing right away. Press `/`, describe a mood, press `Enter`. Press `p` for saved or built-in playlists, `s` to save the audible style and `c` to repeat a playlist from the selected song. Press `F2` to open Settings, `m` to choose a mood model, or `o` to switch the app’s audio output. See [Playlist controls](docs/playlist-controls.md) and [Appearance](docs/appearance.md).
 
 **WSL optional Windows output:** select `GENTLE_STREAM_AUDIO_OUTPUT=windows` when
 starting a new player to stream live mixed PCM to native Windows FFplay instead
@@ -174,7 +174,7 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 ## Controls
 
 **F2** or **Settings** on the command strip opens [Appearance settings](docs/appearance.md):
-live spectrum styles, colors, layout and visibility, plus explicit model selection. **Preview** is
+live spectrum styles, colors, layout and visibility, plus audio output and mood model selection. **Preview** is
 temporary; **Save & close** keeps the changes. F2 always works, even when the controls and footer
 are hidden. Click **Command palette** in the header (or press **Ctrl+P**) to find Settings.
 **Compact** reduces spacing around the spectrum and input to give the graph more room, even on
@@ -199,8 +199,9 @@ without closing the UI.
 | `F4` / **Panic** | Hard cut, reopen output and restart the audible current track from the beginning; same musical settings, playlist, pause and volume, no AI call |
 | `/` | Describe a mood; `Enter` sends it, `Esc` leaves the input |
 | `Ctrl+P` / header **Command palette** | Open the command palette |
-| `F2` / strip **Settings** | Settings: appearance and explicit mood model access; always available via `F2` |
+| `F2` / strip **Settings** | Settings: appearance, audio output and mood model; always available via `F2` |
 | `m` | Directly choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
+| `o` / **Audio output…** in Settings | Switch this app’s sounddevice output without restarting; `Enter` switches, `Esc` closes before selecting. **System default** uses the OS default without changing it. Not available with the WSL Windows audio bridge. |
 | `s` | Save the audible song to Saved prompts, new, or existing playlist; `Enter` saves, `Esc` cancels; replacement is scoped to that group |
 | `p` / strip **Playlist** | Open **My playlist** groups / **Default playlist**; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; `Esc` closes |
 | `c` / **↻ off/on** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
