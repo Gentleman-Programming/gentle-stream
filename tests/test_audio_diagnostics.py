@@ -7,10 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from gentle_stream import main
 from gentle_stream import daemon
-from gentle_stream.client import NoPlayer, PlayerClient
+from gentle_stream.client import NoPlayer, PlayerClient, PlayerError
 from gentle_stream.player import Player
 from gentle_stream.style import Style
 
@@ -62,6 +63,38 @@ def base_state():
     style = Style().to_dict()
     return {"pid": 123, "playing": True, "volume": 0.8, "level": 0.1,
             "backend": "fake", "now": {"style": style, "piece": 1, "bar": 2}, "style": style}
+
+
+def test_plain_play_propagates_wsl_output_refusal(capsys):
+    class FailedOutput:
+        def play(self):
+            raise ValueError("Windows output control failed: supervisor exit status 23")
+
+    class RefusingConnection(Connection):
+        def recv_bytes(self):
+            request = self.requests[-1]
+            if request["cmd"] == "play":
+                return json.dumps(daemon.handle(FailedOutput(), request)).encode()
+            return super().recv_bytes()
+
+    player = PlayerClient(RefusingConnection(base_state()))
+    with patch("gentle_stream.client.connect", return_value=player):
+        with pytest.raises(PlayerError) as caught:
+            main(["ctl", "play"])
+    assert str(caught.value) == "bad request: Windows output control failed: supervisor exit status 23"
+    assert capsys.readouterr() == ("", "")
+
+
+def test_plain_status_extra_argument_keeps_argparse_error(capsys):
+    with patch("gentle_stream.client.connect") as connect:
+        with pytest.raises(SystemExit) as caught:
+            main(["ctl", "status", "typo"])
+    connect.assert_not_called()
+    assert caught.value.code == 2
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.startswith("usage: gentle-stream ")
+    assert err.endswith("gentle-stream: error: unrecognized arguments: typo\n")
 
 
 class AudioDiagnosticsTests(unittest.TestCase):
