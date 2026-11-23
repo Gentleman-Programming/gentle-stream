@@ -53,6 +53,24 @@ class FakeAudio:
             self._thread.join(timeout=2)
 
 
+def fake_devices(device=None, kind=None):
+    if kind == "output":
+        return {"index": 1}
+    return [{"name": "Microphone", "max_output_channels": 0},
+            {"name": "Built-in Speakers", "max_output_channels": 2},
+            {"index": 4, "name": "USB Speakers", "max_output_channels": 2}]
+
+
+def built_in_only(device=None, kind=None):
+    return fake_devices(device, kind) if kind == "output" else fake_devices()[:2]
+
+
+def busy_usb(**kw):
+    if kw.get("device") == 4:
+        raise OSError("USB busy")
+    return FakeAudio(**kw)
+
+
 def no_device(**kw):
     # Exercise startup-error transport without importing/probing a native audio host.
     raise OSError("Error querying device -1")
@@ -83,6 +101,8 @@ def runtime(monkeypatch):
     root = Path(tempfile.mkdtemp(prefix="gs-", dir=os.environ.get("GENTLE_STREAM_TEST_TEMP") or tempfile.gettempdir()))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(root))
     monkeypatch.setenv("XDG_CACHE_HOME", str(root / "cache"))     # no soundfont: fast procedural instruments
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "config"))
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:fake_devices")
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join((str(Path(REPO) / "src"), REPO)))                          # the daemon imports FakeAudio from here
     monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:FakeAudio")
     run = root / "gentle-stream"
@@ -445,6 +465,45 @@ def test_panic_reopens_without_replacing_daemon_or_losing_current_playlist(runti
     player.next()
     player.play()
     wait_for(lambda: player.spectrum(8) is not None and player.now.style == songs[0])
+
+
+def test_output_preference_survives_daemon_restart_and_reports_missing_device(runtime, monkeypatch):
+    from gentle_stream import client
+    from gentle_stream.audio_devices import load_choice
+
+    first = client.ensure()
+    first.pause()
+    first.set_volume(.23)
+    first.set_device(4)
+    assert (first.device, first.device_missing, first.playing, first.volume) == ("USB Speakers", None, False, .23)
+    assert load_choice() == "USB Speakers"
+    before = first.request("state")
+    with pytest.raises(client.PlayerError, match="^no audio output device matches “missing”$"):
+        first.set_device("missing")
+    assert first.request("state") == before and load_choice() == "USB Speakers"
+    first.close()
+    remembered = client.ensure()
+    assert (remembered.device, remembered.device_missing, remembered.playing) == ("USB Speakers", None, True)
+    remembered.close()
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:built_in_only")
+    fallback = client.ensure()
+    assert (fallback.device, fallback.device_missing, fallback.playing) == (None, "USB Speakers", True)
+    assert load_choice() == "USB Speakers"
+    fallback.set_device(None)
+    assert (fallback.device, fallback.device_missing, fallback.playing) == (None, None, True)
+    assert load_choice() is None
+
+
+def test_daemon_starts_on_default_when_remembered_output_is_busy(runtime, monkeypatch):
+    from gentle_stream import client
+    from gentle_stream.audio_devices import load_choice, save_choice
+
+    save_choice("USB Speakers")
+    monkeypatch.setenv("GENTLE_STREAM_AUDIO_FACTORY", "tests.test_daemon:busy_usb")
+    fallback = client.ensure()
+    assert (fallback.device, fallback.device_missing, fallback.playing) == (None, "USB Speakers", True)
+    assert fallback.audio_output_error is None
+    assert load_choice() == "USB Speakers"
 
 
 # ------------------------------------------------------------ ctl

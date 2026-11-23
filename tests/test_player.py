@@ -206,3 +206,104 @@ def test_spectrum_bands_are_balanced_from_left_to_right():
     left, right = bands[:24].mean(), bands[24:].mean()
     assert abs(left - right) < 0.08, (left, right)    # pink noise is the reference for music: an even bar
     assert np.abs(np.diff(bands)).mean() < 0.05       # neighbouring columns are similar, no holes or spikes
+
+
+class SwitchOutput(FakeStream):
+    def __init__(self, fail_start=False, **kw):
+        super().__init__(**kw)
+        self.fail_start, self.closed = fail_start, False
+
+    abort = FakeStream.stop
+
+    def start(self):
+        super().start()
+        if self.fail_start:
+            assert not np.any(self.pull(64)), "a rejected candidate must not consume PCM"
+            raise OSError(f"start failed for {self.kw.get('device')}")
+
+    def close(self):
+        self.closed = True
+        self.active = False
+
+
+class OutputFactory:
+    def __init__(self):
+        self.streams, self.fail = [], {}
+
+    def __call__(self, **kw):
+        device = kw.get("device")
+        if self.fail.get(device) == "open":
+            raise OSError(f"open failed for {device}")
+        stream = SwitchOutput(fail_start=self.fail.get(device) == "start", **kw)
+        self.streams.append(stream)
+        return stream
+
+
+@pytest.fixture
+def output_session(monkeypatch):
+    factory = OutputFactory()
+    monkeypatch.setenv("GENTLE_STREAM_DEVICE_QUERY", "tests.test_daemon:fake_devices")
+    songs = (Style(name="First", bpm=140), Style(name="Next", bpm=140))
+    p = Player(Engine(songs[0], seed=3, sr=16000, samples=False), stream_factory=factory, prebuffer=.01)
+    p.set_playlist(songs, name="Evening", continuous=True)
+    p.start()
+    try:
+        yield p, factory
+    finally:
+        p.close()
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_switch_reuses_queue_and_playlist_with_no_stale_callback(output_session, paused):
+    p, factory = output_session
+    old = factory.streams[0]
+    old.pull(512)
+    if paused:
+        p.pause()  # Switch while the native gain ramp is still non-zero.
+    p.set_volume(.37)
+    before = (p.position, p.buffered_seconds, p.playback_state(), p.underruns, p.output_underflows)
+    p.set_device("USB Speakers")
+    assert (p.device, p.device_missing, p.playing, p.volume) == ("USB Speakers", None, not paused, .37)
+    assert old.closed and not old.active and not np.any(old.pull(256))
+    new = factory.streams[-1]
+    assert new.active and new.kw["device"] == 4
+    if paused:
+        assert not np.any(new.pull(256))
+    assert (p.position, p.buffered_seconds, p.playback_state(), p.underruns, p.output_underflows) == before
+    if paused:
+        p.play()
+    assert np.any(new.pull(512)) and p.position == before[0] + 512
+    p.next()
+    new.pull(512)
+    assert p.now.style.name == "Next" and p.playlist_index == 1
+
+
+@pytest.mark.parametrize("stage", ["open", "start"])
+def test_switch_failure_keeps_playback_and_rejected_callbacks_do_not_consume(output_session, stage):
+    from gentle_stream.audio_devices import DeviceError
+
+    p, factory = output_session
+    p.set_device("USB")
+    factory.streams[-1].pull(512)
+    before = (p.position, p.buffered_seconds, p.playback_state(), p.underruns, p.output_underflows)
+    factory.fail[1] = stage
+    with pytest.raises(DeviceError, match=f"^Cannot switch audio output: {stage} failed for 1$"):
+        p.set_device(1)
+    assert p.playing and p.device == "USB Speakers" and p.audio_output_error is None
+    active, = [stream for stream in factory.streams if stream.active]
+    assert active.kw["device"] == 4
+    for stream in factory.streams:
+        if stream is not active:
+            assert stream.closed and not np.any(stream.pull(128))
+    assert (p.position, p.buffered_seconds, p.playback_state(), p.underruns, p.output_underflows) == before
+    assert np.any(active.pull(512))
+
+
+def test_panic_reopens_selected_output_and_keeps_its_existing_rewind_semantics(output_session):
+    p, factory = output_session
+    p.set_device(4)
+    first = factory.streams[-1].pull(512)
+    p.panic()
+    assert p.device == "USB Speakers" and factory.streams[-1].kw["device"] == 4
+    assert p.position == 0 and p.playing and p.playlist_name == "Evening"
+    np.testing.assert_array_equal(factory.streams[-1].pull(512), first)

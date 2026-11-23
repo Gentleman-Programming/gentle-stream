@@ -25,6 +25,7 @@ from multiprocessing.connection import AuthenticationError, Client
 import numpy as np
 
 from . import daemon, platform_runtime, processes
+from .audio_devices import Device
 from .player import NowPlaying, settle
 from .style import Style
 
@@ -200,6 +201,8 @@ class PlayerClient:
         self.backend = state["backend"]
         self.audio_output = state.get('audio_output')
         self.audio_output_error = state.get('audio_output_error')
+        self.device = state.get("device")
+        self.device_missing = state.get("device_missing")
         # Older daemons do not report diagnostics: unknown is not a zero count.
         self.underruns = state.get("underruns")
         self.output_underflows = state.get("output_underflows")
@@ -266,6 +269,22 @@ class PlayerClient:
 
     def set_volume(self, volume: float) -> None:
         self._control("set_volume", volume=float(volume))
+
+    def devices(self) -> list[Device]:
+        """List the audio outputs visible from the daemon."""
+        return [Device(**device) for device in self.request("devices")["devices"]]
+
+    def set_device(self, device: str | int | None) -> None:
+        """Switch the daemon output; None selects the system default."""
+        try:
+            self._update(self.request("set_device", device=device))
+        except PlayerError:
+            # A failed switch can still change state (e.g. neither output could open).
+            try:
+                self._update(self.request("state"))
+            except (PlayerGone, PlayerError):
+                pass  # Don't replace the original switch error with a refresh error.
+            raise
 
     @contextmanager
     def stage_style(self, style: Style):

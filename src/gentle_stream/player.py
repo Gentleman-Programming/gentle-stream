@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from . import audio_devices
+from .audio_devices import Device, DeviceError
 from .engine import SR, Engine, Track
 from .style import Style
 
@@ -58,9 +60,13 @@ def _default_stream(**kw):
 
 class Player:
     def __init__(self, engine: Engine, stream_factory=_default_stream, prebuffer: float = 1.0,
-                 blocksize: int = 1024, volume: float = 0.8):
+                 blocksize: int = 1024, volume: float = 0.8, *, remember_device: bool = False):
         self.engine = engine
         self._factory = stream_factory
+        self._remember_device = remember_device
+        self._choice_loaded = not remember_device
+        self._device: Device | None = None
+        self.device_missing: str | None = None
         self._prebuffer = int(prebuffer * engine.sr)
         self._blocksize = blocksize
         self._lock = threading.Lock()          # guards the chunk queue (held briefly by the callback)
@@ -98,32 +104,84 @@ class Player:
                 raise ValueError("player is closed")
             if self._stream is not None:
                 return
-            generation = self._generation
-            callback = lambda *args: self._callback(*args, generation=generation)
+            remembered = None
+            if not self._choice_loaded:
+                self._choice_loaded = True
+                if self.audio_output != 'windows':
+                    remembered = audio_devices.load_choice()
             try:
-                self._stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
-                                             blocksize=self._blocksize, latency="high", callback=callback)
-                if not getattr(self._stream, 'reports_output_underflows', True):
-                    self.output_underflows = None
-                if self._producer.ident is None:
-                    self._producer.start()
-                deadline = time.monotonic() + 5
-                while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
-                    time.sleep(0.005)    # the first bar is ready before the device starts pulling
-                self._stream.start()
-                if not self.playing and callable(getattr(self._stream, 'pause', None)):
-                    self._stream.pause()
-                self._restart_error = None
+                if remembered:
+                    try:
+                        selected = audio_devices.find(remembered, self.devices())
+                    except DeviceError:
+                        selected = None
+                    if selected is not None:
+                        try:
+                            self._start_output(selected)
+                        except Exception:
+                            if self._stream is not None:  # Failed cleanup; do not open a second output.
+                                raise
+                        else:
+                            self._device = selected
+                            return
+                    self.device_missing = remembered
+                self._start_output(self._device)
             except Exception:
                 self.playing = False
                 with self._callback_lock:
                     self._generation += 1
-                if self._stream is not None:
-                    try:
-                        self._stream.close()
-                    finally:
-                        self._stream = None
                 raise
+
+    def _start_output(self, device: Device | None) -> None:
+        """Open one sink on the existing queue. Failed starts must not consume PCM."""
+        ready = threading.Event()
+        generation = self._generation
+
+        def callback(outdata, *args):
+            if ready.is_set():
+                self._callback(outdata, *args, generation=generation)
+            else:
+                outdata[:] = 0
+
+        choice = {} if device is None else {"device": device.index}
+        stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
+                               blocksize=self._blocksize, latency="high", callback=callback, **choice)
+        try:
+            if self._producer.ident is None:
+                self._producer.start()
+            deadline = time.monotonic() + 5
+            while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.005)    # the first bar is ready before the device starts pulling
+            stream.start()
+            if not self.playing and callable(getattr(stream, 'pause', None)):
+                stream.pause()
+        except Exception as error:
+            try:
+                stream.close()
+            except Exception as cleanup:
+                self._stream = stream  # Its callback stays disabled; keep the handle for cleanup/retry.
+                raise RuntimeError(f"{error}; output cleanup failed: {cleanup}") from error
+            raise
+        if not getattr(stream, 'reports_output_underflows', True):
+            self.output_underflows = None
+        self._stream = stream
+        self._restart_error = None
+        ready.set()
+
+    def _retire_output(self, *, drain: bool) -> None:
+        """Retire the already-fenced stream; don't open another if cleanup fails."""
+        if self._stream is None:
+            return
+        if drain:
+            self._stream.stop()  # For a device change, preserve already-submitted PCM too.
+        else:
+            # PortAudio aborts without draining; Windows pause confirms the owned sink cut.
+            cut = getattr(self._stream, 'abort', None) or getattr(self._stream, 'pause', None)
+            if not callable(cut):
+                raise ValueError("audio output does not support an immediate cut")
+            cut()
+        self._stream.close()
+        self._stream = None
 
     def close(self) -> None:
         with self._control_lock:
@@ -138,6 +196,60 @@ class Player:
                 self._producer.join(timeout=5)
 
     # ------------------------------------------------------------ controls
+    def _require_device_selection(self) -> None:
+        if self.audio_output == 'windows':
+            raise DeviceError("Audio output selection is not supported by the Windows FFplay bridge")
+
+    def devices(self) -> list[Device]:
+        self._require_device_selection()
+        return audio_devices.output_devices()
+
+    def set_device(self, device: str | int | None) -> None:
+        """Move the current queue to a different device; None follows the system default."""
+        if device is not None and (not isinstance(device, (str, int)) or isinstance(device, bool)):
+            raise TypeError("device must be a name, an index or null")
+        with self._control_lock:
+            if self._stopping.is_set():
+                raise ValueError("player is closed")
+            self._require_device_selection()
+            selected = None if device is None else audio_devices.resolve(device, self.devices())
+            self._choice_loaded = True
+            had_output = self._stream is not None and self._restart_error is None
+            if self._producer.ident is None and self._stream is None:
+                self._device = selected  # Before start, choose the target without saving an untested output.
+                return
+            if not had_output or selected != self._device:
+                with self._callback_lock:
+                    self._generation += 1
+                    self._gain = self.level = 0.0
+                    self._tail[:] = 0
+                try:
+                    self._retire_output(drain=True)
+                except Exception as error:
+                    self.playing = False
+                    self._restart_error = f"Cannot retire previous audio output: {error}"
+                    raise DeviceError(self._restart_error) from error
+                try:
+                    self._start_output(selected)
+                except Exception as error:
+                    message = f"Cannot switch audio output: {error}"
+                    if had_output and self._stream is None:
+                        try:
+                            self._start_output(self._device)
+                        except Exception as rollback:
+                            message += f"; previous output could not reopen: {rollback}"
+                        else:
+                            raise DeviceError(message) from error
+                    self.playing = False
+                    self._restart_error = message
+                    raise DeviceError(message) from error
+            self._device, self.device_missing = selected, None
+            if self._remember_device:
+                try:
+                    audio_devices.save_choice(self.device)
+                except DeviceError as error:
+                    raise DeviceError(f"Output switched, but could not remember it: {error}") from error
+
     def panic(self) -> None:
         """Hard cut, discard pending PCM/DSP, reopen and rewind the same audible track."""
         with self._control_lock:
@@ -149,15 +261,7 @@ class Player:
                 now = self.now
             self.playing = False
             try:
-                if self._stream is not None:
-                    # PortAudio aborts without draining. Windows pause confirms the
-                    # owned sink cut; close then retires its supervisor as usual.
-                    cut = getattr(self._stream, 'abort', None) or getattr(self._stream, 'pause', None)
-                    if not callable(cut):
-                        raise ValueError("audio output does not support an immediate cut")
-                    cut()
-                    self._stream.close()
-                    self._stream = None
+                self._retire_output(drain=False)
                 with self._render_lock:
                     self.engine.restart(now.track)
                     with self._lock:
@@ -345,12 +449,33 @@ class Player:
         return np.concatenate(parts) if parts else np.zeros((0, 2), dtype=np.float32)
 
     @property
+    def device(self) -> str | None:
+        return self._device.name if self._device is not None and not self._restart_error else None
+
+    @property
     def audio_output(self) -> str:
-        return getattr(self._stream, 'audio_output', 'sounddevice')
+        return getattr(self._stream, 'audio_output', getattr(self._factory, 'audio_output', 'sounddevice'))
 
     @property
     def audio_output_error(self):
         return self._restart_error or getattr(self._stream, 'error', None)
+
+    def output_state(self) -> dict:
+        """Report the completed transport change, not an intermediate switch or rollback."""
+        with self._control_lock:
+            error = self.audio_output_error
+            output = {
+                'playing': bool(self.playing) and not bool(error),
+                'volume': float(self.volume),
+                'level': float(self.level),
+                'output_underflows': None if self.output_underflows is None else int(self.output_underflows),
+                'audio_output': self.audio_output,
+                'device': self.device,
+                'device_missing': self.device_missing,
+            }
+            if error is not None or output['audio_output'] == 'windows':
+                output['audio_output_error'] = error
+            return output
 
     @property
     def buffered_seconds(self) -> float:

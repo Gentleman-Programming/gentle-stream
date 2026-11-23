@@ -10,6 +10,8 @@ see platform_runtime.py. Messages are JSON (never pickle), one request and one r
     {"cmd": "state", "bands": 48}   -> {"ok": true, "state": {...}}   (spectrum included when bands > 0)
     {"cmd": "play" | "pause" | "toggle" | "next" | "panic"}  (panic: cut/reopen current track)
     {"cmd": "set_volume", "volume": 0.5}
+    {"cmd": "devices"}             -> {"ok": true, "state": {"devices": [{"index": 0, "name": "...", "default": true}]}}
+    {"cmd": "set_device", "device": 0}   (name, index or null for system default)
     {"cmd": "set_style", "style": {...Style.to_dict()...}}
     {"cmd": "prepare_style", "style": {...}} / {"cmd": "commit_style"}
         Internal connection-local staging; nonblocking commit rejects pre-Panic work.
@@ -23,6 +25,8 @@ A `flock` on `player.lock` (which holds the pid) keeps one player per user; the 
 by a crashed player. Startup is reported to the spawner as one JSON line on `--ready-fd`: `{"ready": true}`,
 `{"running": true}` (another player holds the lock) or `{"error": "...", "audio": bool}`.
 On Windows the singleton uses a byte-range file lock and --ready-stdout reports the same JSON.
+State reports the selected device name (null for the system default) and device_missing (the remembered name
+when startup falls back to the default). The Windows FFplay bridge does not support selecting an output.
 """
 from __future__ import annotations
 
@@ -41,6 +45,7 @@ from multiprocessing.connection import Listener
 from pathlib import Path
 
 from . import platform_runtime
+from .audio_devices import DeviceError
 
 AUDIO_FACTORY_ENV = "GENTLE_STREAM_AUDIO_FACTORY"   # testing seam: "module:attr" replaces sounddevice.OutputStream
 MAX_BANDS = 512
@@ -146,18 +151,12 @@ def state(player, bands: int = 0) -> dict:
     playback = player.playback_state()
     out = {
         "pid": os.getpid(),
-        "playing": bool(player.playing) and not bool(getattr(player, 'audio_output_error', None)),
-        "volume": float(player.volume),
-        "level": float(player.level),
         "backend": player.engine.backend,
         "underruns": int(player.underruns),
-        "output_underflows": None if player.output_underflows is None else int(player.output_underflows),
         "buffered_seconds": float(player.buffered_seconds),
         **playback,
+        **player.output_state(),
     }
-    out['audio_output'] = getattr(player, 'audio_output', 'sounddevice')
-    if out['audio_output'] == 'windows':
-        out['audio_output_error'] = player.audio_output_error
     if bands > 0:
         out["spectrum"] = [round(float(v), 4) for v in player.spectrum_levels(min(bands, MAX_BANDS))]
     return out
@@ -171,6 +170,8 @@ def handle(player, request) -> dict:
         cmd = request["cmd"]
         if cmd == "state":
             return {"ok": True, "state": state(player, int(request.get("bands", 0)))}
+        if cmd == "devices":
+            return {"ok": True, "state": {"devices": [device.to_dict() for device in player.devices()]}}
         if cmd in ("play", "pause", "toggle", "next", "panic"):
             getattr(player, cmd)()
         elif cmd == "previous":
@@ -187,6 +188,8 @@ def handle(player, request) -> dict:
                                 name=request.get("name", ""))
         elif cmd == "set_volume":
             player.set_volume(float(request["volume"]))
+        elif cmd == "set_device":
+            player.set_device(request["device"])
         elif cmd == "set_style":
             if not isinstance(request["style"], dict):
                 raise TypeError("style must be an object")
@@ -207,6 +210,8 @@ def handle(player, request) -> dict:
             return {"ok": True}
         else:
             raise ValueError(f"unknown command {cmd!r}")
+    except DeviceError as e:
+        return {"ok": False, "error": str(e)}
     except (KeyError, TypeError, ValueError) as e:
         return {"ok": False, "error": f"bad request: {e}"}
     return {"ok": True, "state": state(player)}
@@ -326,7 +331,7 @@ def _run(paths, lock, report):
 
     try:
         factory = _stream_factory()
-        player = Player(Engine(), **({"stream_factory": factory} if factory else {}))
+        player = Player(Engine(), remember_device=True, **({"stream_factory": factory} if factory else {}))
     except Exception as e:
         report({"error": f"cannot start the player: {e}", "audio": False})
         return 1
