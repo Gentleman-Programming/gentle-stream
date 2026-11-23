@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import numpy as np
 import pytest
-from textual.widgets import Button, Input, OptionList, Select
+from textual.widgets import Input, OptionList, Select
 
 from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
 from gentle_stream.appearance_ui import SettingsScreen
@@ -160,14 +160,10 @@ async def test_save_corrupt_and_validation_errors_keep_fields(ui):
 
 
 @pytest.mark.asyncio
-async def test_unwritable_library_keeps_save_and_long_model_is_elided(ui):
+async def test_unwritable_library_keeps_save_fields(ui):
     app, p, shell, store, library = ui
-    shell.model = "provider/" + "model-" * 20
     library.path.mkdir()
     async with app.run_test(size=(60, 20)) as pilot:
-        label = str(app.query_one("#model-command", Button).label)
-        assert len(label) <= 26 and "…" in label
-        assert shell.model in str(app.query_one("#model-command").tooltip)
         await pilot.press("s")
         await pilot.pause()
         await pilot.click("#save-destination")

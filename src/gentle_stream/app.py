@@ -27,7 +27,7 @@ from textual.worker import get_current_worker
 from .appearance import Preferences, PreferenceStore
 from .appearance_ui import SettingsScreen
 from .visualizer import Spectrum
-from .volume_meter import render_compact_volume_meter, render_volume_meter
+from .volume_meter import render_volume_meter
 from .bridge import GentleShell, InterpretError, Usage
 from .client import PlayerError
 from .player import Player
@@ -387,58 +387,54 @@ class StreamApp(App):
     AUTO_FOCUS = None
     CSS = """
     Screen { background: $background; }
-    Header { background: #1a1218; color: $primary; }
+    Header, #commands, #volume-meter, #commands Button { background: $footer-background; }
+    Header { color: $primary; }
+    HeaderIcon { width: 17; text-style: bold; pointer: pointer; }
     #panel { padding: 1 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; }
-    #title-row { height: 1; }
-    #title { text-style: bold; color: $primary; width: 1fr; }
-    #playlist { height: 1; min-height: 1; width: 12; border: none; background: $panel; color: $primary; }
-    #playlist:focus { text-style: bold reverse; }
-    #metadata { height: 1; }
+    #title { text-style: bold; color: $primary; }
+    #metadata, #title, #details, #mood-line, #state, #model, #status { height: 1; }
+    #title, #details, #mood-line, #state, #model, #status { text-wrap: nowrap; text-overflow: ellipsis; }
     #details, #mood-line { width: 1fr; }
-    #details, #model { color: $text-muted; }
+    #details, #model, #state { color: $text-muted; }
     #mood-line { color: $accent; text-style: italic; }
     #spectrum { height: 1fr; min-height: 5; margin: 1 0; }
-    #state { color: $text-muted; }
     #status { margin-top: 1; }
-    #commands { height: 1; margin: 0 1; overflow: hidden; background: #000000; }
+    #commands { height: 1; margin: 0 1; overflow: hidden; }
     #commands-left, #commands-right { width: 1fr; height: 1fr; overflow-x: auto; overflow-y: hidden;
                                       scrollbar-size-horizontal: 0; align-vertical: bottom; }
     #commands-right { align-horizontal: right; }
     #transport { width: 15; height: 1fr; align-vertical: bottom; }
-    #volume-meter { width: 13; min-width: 13; height: 1; background: #000000; overflow: hidden; }
-    #transport Button { width: 5; }
-    #commands Button { height: 1; min-height: 1; min-width: 5; width: auto; border: none;
-                       padding: 0 1; background: #000000; color: $primary; }
-    #commands Button:focus { text-style: bold; color: $foreground; }
-    #commands #play.paused, #commands #play.paused:focus { color: #00a6ed; }
-    #commands #model-command { min-width: 13; }
+    #volume-meter { width: 13; min-width: 13; height: 1; overflow: hidden; }
+    #commands Button { height: 1; min-height: 1; min-width: 4; width: auto; border: none;
+                       padding: 0; color: $primary; }
+    #commands #transport Button { width: 5; }
+    #commands Button:hover, #commands Button:focus { text-style: bold; color: $foreground; }
+    #commands #play.paused { color: #00a6ed; }
     #commands #continuous { min-width: 7; }
-    Screen.compact #panel { padding: 0 1; margin-top: 0; }
-    Screen.compact #commands, Screen.compact #volume-meter { height: 1; }
-    Screen.compact #spectrum { margin: 0; }
-    Screen.compact #details, Screen.compact #mood-line, Screen.compact #state,
-    Screen.compact #model, Screen.compact #status { height: 1; }
-    Screen.compact #status { margin-top: 0; }
     #mood { margin: 0 1 1 1; border: round $panel; background: $surface; }
     #mood:focus { border: round $primary; }
+    Screen.short #panel { padding: 0 2; margin-top: 0; }
+    Screen.compact #panel { padding: 0 1; margin-top: 0; }
+    Screen.short #spectrum, Screen.compact #spectrum { margin: 0; }
+    Screen.compact #status, Screen.compact #mood { margin-bottom: 0; margin-top: 0; }
     """
     BINDINGS = [
-        Binding("f2", "settings", "Settings", priority=True),
-        Binding("f4", "panic", "Panic restart", priority=True),
-        Binding("space", "toggle", "Play/Pause"),
-        Binding("n", "next", "Next"),
+        Binding("f2", "settings", "Settings", priority=True, show=False),
+        Binding("f4", "panic", "Panic restart", priority=True, show=False),
+        Binding("space", "toggle", "Play/Pause", show=False),
+        Binding("n", "next", "Next", show=False),
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
-        Binding("s", "save_preset", "Save"),
-        Binding("p", "pick_preset", "Playlist"),
-        Binding("c", "continuous", "Repeat list"),
-        Binding("plus,equals_sign", "volume(5)", "Vol +5"),
-        Binding("minus", "volume(-5)", "Vol -5"),
-        Binding("up", "volume(1)", "Vol +1"),
-        Binding("down", "volume(-1)", "Vol -1"),
+        Binding("s", "save_preset", "Save", show=False),
+        Binding("p", "pick_preset", "Playlist", show=False),
+        Binding("c", "continuous", "Repeat list", show=False),
+        Binding("plus,equals_sign", "volume(5)", "Vol +5", show=False),
+        Binding("minus", "volume(-5)", "Vol -5", show=False),
+        Binding("up", "volume(1)", "Vol +1", show=False),
+        Binding("down", "volume(-1)", "Vol -1", show=False),
         Binding("escape", "leave_mood", show=False),
-        Binding("b", "back", "Back (keeps playing)"),
-        Binding("q", "quit", "Quit (stops music)"),
+        Binding("b", "back", "Back: keep playing"),
+        Binding("q", "quit", "Quit: stop music"),
     ]
 
     def __init__(self, player: Player, shell: GentleShell, initial_mood: str | None = None,
@@ -458,36 +454,33 @@ class StreamApp(App):
         self.theme = GENTLEMAN_THEME.name
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(icon="Command palette")
         with Vertical(id="panel"):
-            with Horizontal(id="title-row"):
-                yield Static(id="title")
-                yield Button("Playlist", id="playlist")
+            yield Static(id="title")
             with Horizontal(id="metadata"):
                 yield Static(id="details")
                 yield Static(id="mood-line")
             yield Spectrum(self.player, id="spectrum")
             yield Static(id="state")
             yield Static(id="model")
-            yield Static("Press / to describe a mood.", id="status")
+            yield Static(id="status")
         with Horizontal(id="commands"):
-            with HorizontalScroll(id="commands-left"):
+            with HorizontalScroll(id="commands-left", can_focus=False):
                 yield Button("Panic", id="panic", tooltip="Hard cut and restart current track (F4); no AI call")
-                yield Button("💾", id="save-command", tooltip="Save audible song (s)")
+                yield Button("Save", id="save-command", tooltip="Save audible song (s)")
                 yield Button("↻ off", id="continuous", tooltip="Continuous playlist from selection (c)")
-                yield Button("✎", id="mood-command", tooltip="Describe a mood (/); Enter sends, Esc leaves")
-                yield Button("☷", id="playlist-command", tooltip="Browse playlists (p)")
+                yield Button("Playlist", id="playlist-command", tooltip="Browse playlists (p)")
             with Horizontal(id="transport"):
                 yield Button("⏮", id="previous", tooltip="Previous song in playlist (wraps to last)")
                 yield Button("⏸", id="play", tooltip="Play / pause (Space)")
                 yield Button("⏭", id="next", tooltip="Next piece (n); next song when continuous")
-            with HorizontalScroll(id="commands-right"):
+            with HorizontalScroll(id="commands-right", can_focus=False):
                 yield Button("-", id="quieter", tooltip="Volume down 5% (-); Down: 1%")
                 yield Static(id="volume-meter")
                 yield Button("+", id="louder", tooltip="Volume up 5% (+); Up: 1%")
-                yield Button("⚙  default", id="model-command", tooltip="Settings (F2) · direct model picker (m)")
-        yield Input(placeholder="Describe a feeling, a concept, a place… then Enter (Esc to leave)", id="mood")
-        yield Footer()
+                yield Button("Settings", id="settings-command", tooltip="Appearance and mood model (F2)")
+        yield Input(placeholder="Describe a mood… Enter sends, Esc leaves", id="mood")
+        yield Footer(show_command_palette=False)
 
     def on_mount(self) -> None:
         # keep references: the timer also fires while a modal is on top or the app is shutting down,
@@ -514,7 +507,7 @@ class StreamApp(App):
 
     def on_resize(self, event: events.Resize) -> None:
         if self.screen_stack:
-            self.screen_stack[0].set_class(self.preferences.compact or event.size.height <= 24, "compact")
+            self.screen_stack[0].set_class(event.size.height <= 24, "short")
 
     def on_unmount(self) -> None:
         self.shell.cancel()  # a running gentle-shell would otherwise keep the process alive after quit
@@ -543,8 +536,7 @@ class StreamApp(App):
         audible_name, audible_index = getattr(now, "playlist_name", None), getattr(now, "playlist_index", None)
         audible = f" · {escape(audible_name)} #{audible_index + 1}" if isinstance(audible_name, str) and isinstance(audible_index, int) else ""
         w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1}{audible}")
-        meter = render_compact_volume_meter if self._root.has_class("compact") else render_volume_meter
-        w["volume-meter"].update(meter(round(p.volume * 100), self.preferences.accent))
+        w["volume-meter"].update(render_volume_meter(round(p.volume * 100), self.preferences.accent))
         self._buttons["play"].label = "⏸" if p.playing else "▶"
         self._buttons["play"].set_class(not p.playing, "paused")
         gap = ' ' * self.preferences.icon_gap
@@ -554,13 +546,6 @@ class StreamApp(App):
         session = f" · session: {self.session_usage.format()}" if self.session_usage else ""
         self._w["model"].update(f"model: {escape(model_label(self.shell.model))}{session}")
         self._w["model"].tooltip = Text(f"model: {model_label(self.shell.model)}{session}")
-        label = self.shell.model or "default"
-        short = label if len(label) <= 22 else label[:10] + "…" + label[-11:]
-        button_label = f"⚙{' ' * self.preferences.icon_gap}{short}"
-        button = self._buttons["model-command"]
-        button.label = Text(button_label)
-        button.styles.min_width = max(13, len(button_label) + 2)  # Include button padding; scroll if narrow.
-        button.tooltip = Text(f"Settings (F2) · direct model picker (m) · {model_label(self.shell.model)}")
 
     def _status(self, text: str) -> None:
         self._w["status"].update(text)
@@ -582,12 +567,12 @@ class StreamApp(App):
         theme = Theme(name=theme_name, primary=p.accent, secondary='#f095c8', accent=p.accent,
                       foreground='#f6eff3', background=background, surface=background,
                       panel='#342230', success='#b4e7c7', warning='#f2b86d', error='#ff718f', dark=True)
-        if p == Preferences():
+        if (p.theme, background, p.accent) == ('gentle', GENTLEMAN_THEME.background, GENTLEMAN_THEME.primary):
             self.theme = GENTLEMAN_THEME.name
         else:
             self.register_theme(theme)
             self.theme = theme.name
-        self._root.set_class(p.compact or self.size.height <= 24, 'compact')
+        self._root.set_class(p.compact, 'compact')
         # Keep the user-selected accent exact; Textual's theme-derived $primary may
         # differ by one channel after its internal palette conversion.
         self._w['title'].styles.color = p.accent
@@ -688,10 +673,9 @@ class StreamApp(App):
         self.push_screen(SaveDialog(style.name, self.library, save))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        actions = {"playlist": self.action_pick_preset, "play": self.action_toggle,
-                   "next": self.action_next, "previous": self.action_previous, "panic": self.action_panic,
-                   "mood-command": self.action_focus_mood,
-                   "model-command": self.action_settings, "save-command": self.action_save_preset,
+        actions = {"play": self.action_toggle, "next": self.action_next,
+                   "previous": self.action_previous, "panic": self.action_panic,
+                   "settings-command": self.action_settings, "save-command": self.action_save_preset,
                    "playlist-command": self.action_pick_preset, "continuous": self.action_continuous,
                    "quieter": lambda: self.action_volume(-5), "louder": lambda: self.action_volume(5)}
         if action := actions.get(event.button.id):

@@ -173,20 +173,24 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 
 ## Controls
 
-**F2** or the **gear** opens [Appearance settings](docs/appearance.md): live spectrum
-styles, colors, layout and visibility, plus explicit model selection. Preview/Cancel
-is temporary; Save persists independently of songs. F2 always works, even when the
-controls and footer are hidden. The command palette also includes Settings.
+**F2** or **Settings** on the command strip opens [Appearance settings](docs/appearance.md):
+live spectrum styles, colors, layout and visibility, plus explicit model selection. **Preview** is
+temporary; **Save & close** keeps the changes. F2 always works, even when the controls and footer
+are hidden. Click **Command palette** in the header (or press **Ctrl+P**) to find Settings.
+**Compact** reduces spacing around the spectrum and input to give the graph more room, even on
+short terminals.
 
-The compact clickable command strip sits between the spectrum panel and mood input.
-Tab focuses its buttons; tooltips show full action labels and shortcuts. The model button
-shows the chosen model (or Gentle Shell default), with long IDs elided safely. On narrow
-terminals, focus/scroll each side group independently. **💾 save, ↻ off/on, ✎ mood, ☷ playlists**
-stay left, alongside **Panic**; **⏮ Previous, ⏸ / ▶ play/pause, ⏭ Next** stay centered in the full strip;
-**⚙ chosen model, − / + volume** stay right. **⏮** returns to the previous playlist song
-in displayed order, wrapping at the first song, with repeat on or off. Pause and volume are
-preserved. Select a song in Playlist first; Previous is not a current-song restart and adds
-no keyboard shortcut. Older-daemon rejections remain visible without closing the UI.
+The one-row command strip sits between the spectrum panel and mood input. Tab focuses its buttons;
+tooltips show their shortcuts, so the footer can show only the remaining shortcuts. **Panic**,
+**Save**, **↻ off/on** and **Playlist** are on the left; **⏮ Previous**, **⏸ / ▶ Play/Pause** and
+**⏭ Next** stay centered; **− / + volume** and **Settings** are on the right. On narrow terminals,
+focusing a button scrolls its side group independently. The model line shows the selected model
+(or Gentle Shell default); hover to read a long ID and session usage in full.
+
+**⏮** returns to the previous playlist song in displayed order, wrapping at the first song, with
+repeat on or off. Pause and volume are preserved. Select a song in Playlist first; Previous is
+not a current-song restart and adds no keyboard shortcut. Older-daemon rejections remain visible
+without closing the UI.
 
 | Key | Action |
 | :--- | :--- |
@@ -194,10 +198,11 @@ no keyboard shortcut. Older-daemon rejections remain visible without closing the
 | `n` | Next piece with the same mood, or next song when continuous playback is on |
 | `F4` / **Panic** | Hard cut, reopen output and restart the audible current track from the beginning; same musical settings, playlist, pause and volume, no AI call |
 | `/` | Describe a mood; `Enter` sends it, `Esc` leaves the input |
-| `F2` / gear | Settings: appearance and explicit mood model access; always available |
+| `Ctrl+P` / header **Command palette** | Open the command palette |
+| `F2` / strip **Settings** | Settings: appearance and explicit mood model access; always available via `F2` |
 | `m` | Directly choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
 | `s` | Save the audible song to Saved prompts, new, or existing playlist; `Enter` saves, `Esc` cancels; replacement is scoped to that group |
-| `p` / click **Playlist** | Open **My playlist** groups / **Default playlist**; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; `Esc` closes |
+| `p` / strip **Playlist** | Open **My playlist** groups / **Default playlist**; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; `Esc` closes |
 | `c` / **↻ off/on** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
@@ -335,7 +340,7 @@ The cost is the one Gentle Shell reports, in US dollars. Providers used through 
 | | |
 | :--- | :--- |
 | **Save** | `s`, song name (up to 40 characters), destination (Saved prompts by default, New playlist, or existing named group), `Enter`; New reveals a playlist name field |
-| **Apply** | Click **Playlist** or press `p`, choose **My playlist**, open a group, click/Enter a song — starts at the next bar and exits rotation |
+| **Apply** | Click **Playlist** on the command strip or press `p`, choose **My playlist**, open a group, click/Enter a song — starts at the next bar and exits rotation |
 | **Built-ins** | Choose **Default playlist** for genre styles without a model call; entries cannot be deleted and browsing/applying them never changes your saved file |
 | **Keyboard** | Left/Right switch playlists even while the entry list is focused or empty; Up/Down highlight entries; `Enter` applies, `Esc` closes |
 | **Delete** | In **My playlist**, highlight one, `d` or `Delete` |

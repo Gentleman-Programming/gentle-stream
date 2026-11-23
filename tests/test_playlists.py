@@ -2,8 +2,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+import os
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -16,10 +17,12 @@ from gentle_stream.style import DEFAULT, Style
 class PlaylistTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(tempfile.mkdtemp(prefix="gentle-stream-playlists-"))
-        print(f"Retained test scratch: {cls.root}", flush=True)
+        scratch = tempfile.TemporaryDirectory(prefix="gentle-stream-playlists-")
+        cls.addClassCleanup(scratch.cleanup)
+        cls.root = Path(scratch.name)
 
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, XDG_CONFIG_HOME=str(self.root / "config")))
         self.store = PresetStore(self.root / f"{self._testMethodName}.json")
         self.player = Mock(now=SimpleNamespace(style=DEFAULT, piece=1, bar=0), playing=True, volume=0.8,
                            continuous=False)
@@ -47,7 +50,7 @@ class PlaylistTests(unittest.IsolatedAsyncioTestCase):
     async def test_main_click_opener_empty_saved_switch_and_click_default(self):
         from gentle_stream.playlists import default_playlist
         async with self.app.run_test(size=(80, 24)) as pilot:
-            self.assertTrue(await pilot.click("#playlist"))
+            self.assertTrue(await pilot.click("#playlist-command"))
             await pilot.pause()
             self.assertIsInstance(self.app.screen, PresetPicker)
             self.assertIn("No saved prompts yet", str(self.app.screen.query_one("#presets-status").render()))

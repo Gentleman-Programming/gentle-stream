@@ -1,18 +1,20 @@
 """Public Textual flows; no audio devices, generators, or live player."""
 from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
 import pytest
-from textual.widgets import Button, Input, OptionList, Select
+from textual.command import CommandPalette
+from textual.widgets import Button, Input, Switch
 
+from gentle_stream import main
 from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
 from gentle_stream.appearance_ui import SettingsScreen
-from gentle_stream.client import PlayerError
 from gentle_stream.playlist_library import PlaylistLibrary
 from gentle_stream.presets import PresetStore
-from gentle_stream.style import DEFAULT, Style
+from gentle_stream.style import DEFAULT
 
 
 @pytest.fixture
@@ -94,15 +96,18 @@ async def test_transport_double_clicks_are_not_debounced(ui):
 
 
 @pytest.mark.asyncio
-async def test_toolbar_background_is_black_with_and_without_keyboard_focus(ui):
+async def test_toolbar_uses_header_surface_with_and_without_keyboard_focus(ui):
     app, player, shell, _, _ = ui
     async with app.run_test(size=(80, 24)) as pilot:
+        background = app.query_one("Header").styles.background
+        assert app.query_one("#commands").styles.background == background
+        assert app.query_one("#volume-meter").styles.background == background
         for button in app.query("#commands Button"):
-            assert button.styles.background.hex == "#000000", button.id
+            assert button.styles.background == background, button.id
             button.focus()
             await pilot.pause()
             assert app.focused is button
-            assert button.styles.background.hex == "#000000", button.id
+            assert button.styles.background == background, button.id
             assert not button.styles.text_style.reverse
             assert not button.styles.text_style.underline
             assert button.styles.border_left[0] in ("", "none")
@@ -121,10 +126,10 @@ async def test_toolbar_clicks_keyboard_and_geometry(ui, size):
         assert app.query_one("#spectrum").region.height >= 5
         for selector in ("#state", "#model", "#status"):
             assert app.query_one(selector).region.bottom <= panel.content_region.bottom
-        for id, icon in {"previous": "⏮", "play": "⏸", "next": "⏭", "mood-command": "✎",
-                         "save-command": "💾", "playlist-command": "☷", "continuous": "↻  off"}.items():
-            assert str(app.query_one(f"#{id}", Button).label) == icon
-        for id in ("previous", "play", "next", "mood-command", "model-command", "save-command", "playlist-command",
+        for id, label in {"previous": "⏮", "play": "⏸", "next": "⏭", "save-command": "Save",
+                          "playlist-command": "Playlist", "continuous": "↻  off", "settings-command": "Settings"}.items():
+            assert str(app.query_one(f"#{id}", Button).label) == label
+        for id in ("previous", "play", "next", "settings-command", "save-command", "playlist-command",
                    "continuous", "quieter", "louder"):
             button = app.query_one(f"#{id}", Button)
             assert button.can_focus and button.tooltip
@@ -133,19 +138,15 @@ async def test_toolbar_clicks_keyboard_and_geometry(ui, size):
             await pilot.pause()
             assert await pilot.click(f"#{id}", offset=(button.size.width // 2, 0)), id
             await pilot.pause()
-            if id == "model-command":
+            if id == "settings-command":
                 assert isinstance(app.screen, SettingsScreen)
-                await app.screen.submit('model')
+                await pilot.press("escape")
+                await pilot.press("m")
                 assert isinstance(app.screen, ModelPicker)
                 await pilot.pause()
                 await pilot.press("down", "enter")
-                await pilot.pause()
-                await pilot.press("escape")
-                await pilot.pause()
-                assert "chosen-model" in str(app.query_one("#model-command", Button).label)
-                model_button = app.query_one("#model-command", Button)
-                assert model_button.content_region.width >= len(str(model_button.label))
-                assert "provider/chosen-model" in str(app.query_one("#model-command").tooltip)
+                assert shown(app, "#model") == "model: provider/chosen-model"
+                assert str(app.query_one("#settings-command", Button).label) == "Settings"
             elif id == "save-command":
                 assert isinstance(app.screen, SaveDialog)
                 await pilot.press("escape")
@@ -162,7 +163,7 @@ async def test_toolbar_clicks_keyboard_and_geometry(ui, size):
         assert p.toggle.call_count == 2 and p.next.call_count == 2
         await pilot.press("escape", "tab")
         assert isinstance(app.focused, Button)
-        (store.path.parent / f"toolbar-{size[0]}x{size[1]}.svg").write_text(app.export_screenshot(), encoding="utf-8")
+        assert not store.path.exists()
         shell.interpret_with_usage.assert_not_called()
 
 
@@ -177,17 +178,13 @@ async def test_volume_meter_lives_between_controls_without_moving_transport(ui, 
         center = app.query_one("#transport")
         right = app.query_one("#commands-right")
         meter = app.query_one("#volume-meter")
-        assert strip.styles.background.hex == "#000000"
         assert strip.region.height == 1
         assert strip.region.contains_region(center.region)
         assert abs((center.region.x * 2 + center.region.width) -
                    (strip.region.x * 2 + strip.region.width)) <= 1
-        assert [child.id for child in right.children] == ["quieter", "volume-meter", "louder", "model-command"]
+        assert [child.id for child in right.children] == ["quieter", "volume-meter", "louder", "settings-command"]
         assert meter.region.width == 13 and meter.region.height == 1
-        model = app.query_one('#model-command', Button)
-        assert meter.region.right <= model.region.x
-        if size[0] >= 100:
-            assert model.region.width <= 14  # Default label must not push the gauge left.
+        assert meter.region.right <= right.query_one("#settings-command").region.x
         assert strip.region.contains_region(meter.region)
         assert meter.render().plain == "▱" * 8 + " 0%"
         at_zero = meter.render().plain
@@ -248,22 +245,24 @@ async def test_centered_transport_and_independent_side_groups(ui, size):
         left = app.query_one("#commands-left")
         center = app.query_one("#transport")
         right = app.query_one("#commands-right")
-        assert [b.id for b in left.query(Button)] == ["panic", "save-command", "continuous", "mood-command", "playlist-command"]
+        assert [b.id for b in left.query(Button)] == ["panic", "save-command", "continuous", "playlist-command"]
         assert [b.id for b in center.query(Button)] == ["previous", "play", "next"]
-        assert [b.id for b in right.query(Button)] == ["quieter", "louder", "model-command"]
+        assert [b.id for b in right.query(Button)] == ["quieter", "louder", "settings-command"]
+        if size[0] >= 80:
+            assert all(left.region.contains_region(b.region) for b in left.query(Button))
+            assert all(right.region.contains_region(b.region) for b in right.query(Button))
         assert abs((center.region.x * 2 + center.region.width) - (strip.x * 2 + strip.width)) <= 1
         assert left.region.right <= center.region.x < center.region.right <= right.region.x
         assert all(center.region.contains_region(b.region) for b in center.query(Button))
         assert str(app.query_one("#previous", Button).label) == "⏮"
         assert "previous" in str(app.query_one("#previous").tooltip).lower()
-        assert "long-model" in str(app.query_one("#model-command", Button).label)
-        assert shell.model in str(app.query_one("#model-command").tooltip)
+        assert str(app.query_one("#settings-command", Button).label) == "Settings"
+        assert shell.model in str(app.query_one("#model").tooltip)
         await pilot.click("#previous")
         p.previous.assert_not_called()
         assert "Select a song in Playlist" in shown(app, "#status")
         assert app.is_running
-        if size[0] in (80, 120):
-            (store.path.parent / f"centered-{size[0]}.svg").write_text(app.export_screenshot(), encoding="utf-8")
+        assert not store.path.exists()
 
 
 @pytest.mark.asyncio
@@ -279,7 +278,7 @@ async def test_paused_play_is_blue_without_shifting_centered_transport(ui, size)
         await pilot.pause()
         assert player.playing is False and str(play.label) == "▶"
         assert play.styles.color.hex.lower() == "#00a6ed"
-        assert play.styles.background.hex == strip.styles.background.hex == "#000000"
+        assert play.styles.background == strip.styles.background
         assert play.region.width == 5 and transport.region == before
         play.focus()
         await pilot.pause()
@@ -287,9 +286,101 @@ async def test_paused_play_is_blue_without_shifting_centered_transport(ui, size)
         assert await pilot.click("#play")
         await pilot.pause()
         assert player.playing is True and str(play.label) == "⏸"
-        assert play.styles.background.hex == "#000000"
+        assert play.styles.background == strip.styles.background
         assert play.region.width == 5 and transport.region == before
         assert player.toggle.call_count == 2
         assert not store.path.exists() and not library.path.exists()
         shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_named_header_palette_opens_settings_even_with_hidden_chrome(ui):
+    app, player, shell, store, library = ui
+    app.apply_preferences(replace(app.preferences, show_controls=False, show_input=False, show_footer=False))
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert shown(app, "HeaderIcon") == "Command palette"
+        assert await pilot.click("HeaderIcon", offset=(4, 0))
+        assert isinstance(app.screen, CommandPalette)
+        await pilot.press(*"settings")
+        await pilot.pause(.35)
+        await pilot.press("enter", "enter")
+        assert isinstance(app.screen, SettingsScreen)
+        await pilot.press("escape", "ctrl+p")
+        assert isinstance(app.screen, CommandPalette)
+        await pilot.press("escape", "f2")
+        assert isinstance(app.screen, SettingsScreen)
+        await pilot.press("escape", "slash")
+        assert app.query_one("#mood", Input).has_focus
+        assert not player.toggle.called and not player.set_style.called
+        shell.interpret_with_usage.assert_not_called()
+        assert not app.preference_store.path.exists() and not store.path.exists() and not library.path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (80, 24)])
+async def test_main_screen_renders_one_playlist_and_no_strip_bindings_in_footer(ui, size):
+    app, player, shell, store, library = ui
+    async with app.run_test(size=size) as pilot:
+        assert not app.query("#playlist")
+        assert [button.id for button in app.query(Button) if str(button.label) == "Playlist"] == ["playlist-command"]
+        await pilot.pause()  # Footer builds its key labels after the initial bindings update.
+        footer = app.query_one("Footer")
+        assert {key.key for key in footer.query("FooterKey")} == {"slash", "m", "b", "q"}
+        assert all(footer.region.contains_region(key.region) for key in footer.query("FooterKey"))
+        await pilot.press("f4", "s")
+        assert isinstance(app.screen, SaveDialog)
+        await pilot.press("escape", "p")
+        assert isinstance(app.screen, PresetPicker)
+        await pilot.press("escape", "c")
+        assert shown(app, "#status") == "Select a song in Playlist (p), then enable repeat (c)."
+        player.panic.assert_called_once()
+        player.set_playlist.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+        assert not store.path.exists() and not library.path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (80, 24), (180, 50)])
+async def test_compact_preview_gives_spectrum_more_room_without_hiding_chrome(ui, size):
+    app, player, shell, store, library = ui
+    async with app.run_test(size=size) as pilot:
+        root = app.screen
+
+        def layout():
+            panel, spectrum, strip, mood, footer = [root.query_one(s) for s in
+                                                    ("#panel", "#spectrum", "#commands", "#mood", "Footer")]
+            assert spectrum.region.height >= app.preferences.height
+            assert panel.content_region.contains_region(root.query_one("#status").region)
+            assert panel.region.bottom <= strip.region.y < strip.region.bottom <= mood.region.y
+            assert mood.region.bottom <= footer.region.y < footer.region.bottom <= size[1]
+            return spectrum.region
+
+        standard = layout()
+        standard_theme = app.theme
+        await pilot.press("f2")
+        app.screen.query_one("#pref-compact", Switch).value = True
+        await app.screen.submit("preview")
+        await pilot.pause()
+        compact = layout()
+        assert compact.height > standard.height and compact.width > standard.width
+        assert app.theme == standard_theme
+        await pilot.press("escape")
+        assert layout() == standard
+        assert not app.preferences.compact and not app.preference_store.path.exists()
+        player.toggle.assert_not_called()
+        player.set_style.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+        assert not store.path.exists() and not library.path.exists()
+
+
+def test_cli_help_describes_the_rendered_controls(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--help"])
+    assert exit_info.value.code == 0
+    stdout, stderr = capsys.readouterr()
+    assert stderr == ""
+    assert "Ctrl+P   open the command palette (also clickable in the header)" in stdout
+    assert "Settings and volume right" in stdout
+    assert "Compact gives the spectrum more room by trimming spacing, even on short terminals." in stdout
+    assert "gear opens Settings" not in stdout
 
