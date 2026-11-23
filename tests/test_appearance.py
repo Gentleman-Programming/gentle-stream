@@ -2,7 +2,8 @@
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Input, Switch
+from textual.containers import VerticalScroll
+from textual.widgets import Button, Input, Switch
 
 from gentle_stream.appearance import Preferences, PreferenceError, PreferenceStore
 from gentle_stream.appearance_ui import SettingsScreen
@@ -67,67 +68,165 @@ def test_atomic_write_failure_keeps_previous_record(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(60, 20), (80, 24), (120, 30)])
-async def test_live_preview_cancel_save_recovery_and_no_audio(ui, size):
-    app, p, shell, legacy, library = ui
+@pytest.mark.parametrize('size', [(80, 24), (180, 50)])
+async def test_settings_keeps_fields_and_actions_legible(ui, size):
+    app, *_ = ui
     async with app.run_test(size=size) as pilot:
-        before = [c for c in p.mock_calls if c[0] != 'spectrum']
         await pilot.press('f2')
-        assert isinstance(app.screen, SettingsScreen)
-        assert "Settings" in shown(app, '#settings-title')
-        for key in ('show_visualizer', 'show_controls', 'show_input', 'show_footer',
-                    'show_details', 'show_model'):
-            app.screen.query_one('#pref-' + key, Switch).value = False
-        await app.screen.submit('preview')
-        assert shown(app, '#settings-status') == 'Preview only — Save to keep; Cancel restores.'
-        root = app.screen_stack[0]
-        assert not root.query_one('#spectrum').display
-        assert not root.query_one('#commands').display
-        assert root.query_one('#panel').styles.height.is_auto
-        await pilot.press('escape')
-        assert root.query_one('#commands').display
-        await pilot.press('f2')
-        app.screen.query_one('#pref-show_controls', Switch).value = False
-        app.screen.query_one('#pref-show_input', Switch).value = False
-        await app.screen.submit('save')
-        assert shown(app, '#settings-status') == 'Appearance saved.'
-        await pilot.press('escape', 'slash')
-        assert root.query_one('#mood').display and root.query_one('#mood').has_focus
-        assert not app.preferences.show_input
-        await pilot.press('f2')  # priority binding works even inside an Input
-        assert isinstance(app.screen, SettingsScreen)
-        app.screen.query_one('#pref-accent', Input).value = 'invalid'
-        stored = app.preference_store.path.read_bytes()
-        current = app.preferences
-        await app.screen.submit('save')
-        assert shown(app, '#settings-status') == 'Invalid accent.'
-        assert app.preferences == current and app.preference_store.path.read_bytes() == stored
-        await app.screen.submit('defaults')
-        assert shown(app, '#settings-status') == 'Defaults preview — Save to keep; Cancel restores.'
-        await app.screen.submit('save')
-        assert app.preference_store.load() == Preferences()
-        assert [c for c in p.mock_calls if c[0] != 'spectrum'] == before
-        shell.list_models.assert_not_called()
-        shell.interpret_with_usage.assert_not_called()
-        assert not legacy.path.exists() and not library.path.exists()
-        svg_file = legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg'
-        (legacy.path.parent / f'settings-{size[0]}x{size[1]}.svg').write_text(app.export_screenshot(), encoding='utf-8')
-        assert svg_file.read_text(encoding='utf-8').startswith('<svg')
+        screen = app.screen
+        scroll = screen.query_one(VerticalScroll)
+        for key in ('theme', 'background', 'accent', 'style', 'palette', 'height'):
+            assert scroll.content_region.contains_region(screen.query_one('#pref-' + key).region), key
+        actions = screen.query_one('#settings-actions')
+        assert [str(button.label) for button in actions.query(Button)] == [
+            'Preview', 'Defaults', 'Close', 'Save & close',
+        ]
+        for button in actions.query(Button):
+            assert actions.content_region.contains_region(button.region)
+            assert button.content_region.width >= len(str(button.label))
 
 
 @pytest.mark.asyncio
-async def test_corrupt_and_failed_save_leave_live_preferences_unchanged(ui):
+@pytest.mark.parametrize('dismissal', ['close', 'escape'])
+async def test_close_discards_preview_and_unapplied_edits(ui, dismissal):
+    app, player, shell, legacy, library = ui
+    saved = replace(Preferences(), accent='#123456')
+    app.preference_store.save(saved)
+    app.preferences = app.preference_store.load()
+    stored = app.preference_store.path.read_bytes()
+    async with app.run_test(size=(80, 24)) as pilot:
+        root = app.screen
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        for key in ('show_visualizer', 'show_controls', 'show_input', 'show_footer',
+                    'show_details', 'show_model'):
+            app.screen.query_one('#pref-' + key, Switch).value = False
+        assert await pilot.click('#settings-preview')
+        assert shown(app, '#settings-status') == 'Preview applied. Close or Esc discards it.'
+        assert not root.query_one('#spectrum').display
+        assert not root.query_one('#commands').display
+        assert root.query_one('#panel').styles.height.is_auto
+        app.screen.query_one('#pref-accent', Input).value = 'invalid'
+        if dismissal == 'close':
+            assert await pilot.click('#settings-close')
+        else:
+            await pilot.press('escape')
+        assert app.screen is root
+        assert app.preferences == saved and app.preference_store.path.read_bytes() == stored
+        assert root.query_one('#spectrum').display and root.query_one('#commands').display
+        await pilot.press('f2')
+        assert app.screen.query_one('#pref-accent', Input).value == saved.accent
+        assert [call for call in player.mock_calls if call[0] != 'spectrum'] == before
+        shell.list_models.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+        assert not legacy.path.exists() and not library.path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('size', [(60, 20), (80, 24), (120, 30)])
+async def test_save_persists_then_dismisses_and_defaults_can_be_saved(ui, size):
+    app, player, shell, _, _ = ui
+    async with app.run_test(size=size) as pilot:
+        root = app.screen
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        app.screen.query_one('#pref-show_controls', Switch).value = False
+        app.screen.query_one('#pref-show_input', Switch).value = False
+        assert await pilot.click('#settings-save')
+        assert app.screen is root
+        expected = replace(Preferences(), show_controls=False, show_input=False)
+        assert app.preference_store.load() == app.preferences == expected
+        assert not root.query_one('#commands').display and not root.query_one('#mood').display
+        await pilot.press('slash')
+        assert root.query_one('#mood').display and root.query_one('#mood').has_focus
+        await pilot.press('f2')  # priority binding works even inside an Input
+        assert isinstance(app.screen, SettingsScreen)
+        assert not app.screen.query_one('#pref-show_input', Switch).value
+        stored = app.preference_store.path.read_bytes()
+        assert await pilot.click('#settings-defaults')
+        assert shown(app, '#settings-status') == 'Defaults previewed. Close or Esc discards them.'
+        assert app.screen.query_one('#pref-show_input', Switch).value
+        assert app.preferences == Preferences() and app.preference_store.path.read_bytes() == stored
+        assert await pilot.click('#settings-save')
+        assert app.screen is root and app.preference_store.load() == Preferences()
+        assert [call for call in player.mock_calls if call[0] != 'spectrum'] == before
+        shell.list_models.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('key,error', [('accent', 'Invalid accent.'), ('bands', 'Invalid bands.')])
+async def test_invalid_save_keeps_modal_open_and_changes_nothing(ui, key, error):
+    app, player, shell, _, _ = ui
+    app.preference_store.save(Preferences())
+    stored = app.preference_store.path.read_bytes()
+    async with app.run_test(size=(80, 24)) as pilot:
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        screen = app.screen
+        field = screen.query_one('#pref-' + key, Input)
+        field.value = 'invalid'
+        assert await pilot.click('#settings-save')
+        assert app.screen is screen and field.value == 'invalid'
+        assert shown(app, '#settings-status') == error
+        assert app.preferences == Preferences() and app.preference_store.path.read_bytes() == stored
+        assert [call for call in player.mock_calls if call[0] != 'spectrum'] == before
+        shell.list_models.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_write_failure_keeps_preview_and_allows_retry(ui, monkeypatch):
+    import gentle_stream.appearance as appearance
+    app, player, shell, _, _ = ui
+    app.preference_store.save(Preferences())
+    stored = app.preference_store.path.read_bytes()
+
+    def refuse(*args):
+        raise OSError('test replacement refused')
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        root = app.screen
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        screen = app.screen
+        field = screen.query_one('#pref-accent', Input)
+        field.value = '#123456'
+        assert await pilot.click('#settings-preview')
+        field.value = '#00ff00'
+        with monkeypatch.context() as patch:
+            patch.setattr(appearance.os, 'replace', refuse)
+            assert await pilot.click('#settings-save')
+        assert app.screen is screen and field.value == '#00ff00'
+        assert shown(app, '#settings-status') == 'Cannot write appearance preferences: test replacement refused'
+        assert app.current_theme.primary == '#123456'
+        assert app.preferences == replace(Preferences(), accent='#123456')
+        assert app.preference_store.path.read_bytes() == stored
+        await pilot.pause(screen.query_one('#settings-save', Button).active_effect_duration)
+        assert await pilot.click('#settings-save')
+        assert app.screen is root
+        assert app.preference_store.load() == app.preferences == replace(Preferences(), accent='#00ff00')
+        assert [call for call in player.mock_calls if call[0] != 'spectrum'] == before
+        shell.list_models.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_record_is_reported_without_leaving_settings(ui):
     app, p, shell, _, _ = ui
     app.preference_store.path.parent.mkdir(parents=True)
     app.preference_store.path.write_text('{oops')
     app.preference_store.load()
     async with app.run_test() as pilot:
         await pilot.press('f2')
-        assert shown(app, '#settings-status').startswith('Cannot read appearance preferences:')
+        screen = app.screen
+        error = shown(app, '#settings-status')
+        assert error.startswith('Cannot read appearance preferences:')
         before = app.preferences
         app.screen.query_one('#pref-accent', Input).value = '#ffffff'
-        await app.screen.submit('save')
-        assert shown(app, '#settings-status').startswith('Cannot read appearance preferences:')
+        assert await pilot.click('#settings-save')
+        assert app.screen is screen
+        assert shown(app, '#settings-status') == error + '; fix or move appearance.json before saving.'
         assert app.preferences == before
         assert app.preference_store.path.read_text() == '{oops'
         p.set_style.assert_not_called()
@@ -148,7 +247,7 @@ async def test_live_color_updates_and_command_palette(ui):
             await pilot.pause()
             assert app.current_theme.primary == color
             assert app.screen_stack[0].query_one('#title').styles.color.hex.lower() == color
-            widget_color = app.screen_stack[0].query_one('#playlist').styles.color
+            widget_color = app.screen_stack[0].query_one('#louder', Button).styles.color
             assert all(abs(actual - int(color[i:i + 2], 16)) <= 1
                        for actual, i in zip((widget_color.r, widget_color.g, widget_color.b), (1, 3, 5)))
         assert p.start.call_count == 1
@@ -164,7 +263,7 @@ async def test_settings_and_model_menus_explain_context_without_changing_music(u
         await pilot.press('f2')
         assert isinstance(app.screen, SettingsScreen)
         assert 'music is unchanged' in shown(app, '#settings-description')
-        await app.screen.submit('model')
+        assert await pilot.click('#settings-model')
         await pilot.pause()  # the pushed screen mounts on the next event-loop turn
         assert isinstance(app.screen, ModelPicker)
         assert 'Choose a mood model' in shown(app, '.heading')
@@ -183,7 +282,7 @@ async def test_settings_model_is_explicit_and_m_stays_direct(ui):
     app, p, shell, _, _ = ui
     async with app.run_test() as pilot:
         await pilot.press('f2')
-        await app.screen.submit('model')
+        assert await pilot.click('#settings-model')
         assert isinstance(app.screen, ModelPicker)
         await pilot.pause()
         await pilot.press('down', 'enter')
