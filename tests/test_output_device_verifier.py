@@ -278,7 +278,7 @@ def test_rollback_does_not_claim_old_device_for_reused_index(probe, monkeypatch,
     inventory = {0: 'Monitor', 7: 'Headset A', 9: 'Headset B'}
 
     def dynamic(kind=None):
-        rows = [{'index': i, 'name': n, 'max_output_channels': 2} for i, n in inventory.items()]
+        rows = [{'index': i, 'name': n, 'max_output_channels': 2, 'hostapi': 0} for i, n in inventory.items()]
         return rows[0] if kind else rows
 
     monkeypatch.setattr(audio_devices, '_query', lambda: dynamic)

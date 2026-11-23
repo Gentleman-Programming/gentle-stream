@@ -327,7 +327,7 @@ def _run(paths, lock, report):
     lock.flush()
 
     from .engine import Engine
-    from .player import Player
+    from .player import Player, _OutputCleanupError
 
     try:
         factory = _stream_factory()
@@ -341,10 +341,13 @@ def _run(paths, lock, report):
         message = str(error)
         try:
             player.close()
+        except _OutputCleanupError as cleanup:
+            reported = error.failures if isinstance(error, _OutputCleanupError) else {}
+            for operation, failure in cleanup.failures.items():
+                if operation not in reported:
+                    message += f"; shutdown cleanup failed: {failure}"
         except Exception as cleanup:
-            # start() already includes the first cleanup failure if it retained the stream.
-            if error.__cause__ is None or str(cleanup) != str(error.__cause__):
-                message += f"; shutdown cleanup failed: {cleanup}"
+            message += f"; shutdown cleanup failed: {cleanup}"
         report({"error": message, "audio": True})
         return 1
     try:

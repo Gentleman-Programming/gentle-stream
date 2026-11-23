@@ -58,6 +58,14 @@ def _default_stream(**kw):
     return sd.OutputStream(**kw)
 
 
+class _OutputCleanupError(RuntimeError):
+    """Keep the failed operations available to callers independently of their text."""
+
+    def __init__(self, message: str, failures: dict[str, Exception]):
+        super().__init__(message)
+        self.failures = failures
+
+
 class Player:
     def __init__(self, engine: Engine, stream_factory=_default_stream, prebuffer: float = 1.0,
                  blocksize: int = 1024, volume: float = 0.8, *, remember_device: bool = False):
@@ -163,7 +171,7 @@ class Player:
                 stream.close()
             except Exception as cleanup:
                 self._stream = stream  # Its callback stays disabled; keep the handle for cleanup/retry.
-                raise RuntimeError(f"{error}; output cleanup failed: {cleanup}") from cleanup
+                raise _OutputCleanupError(f"{error}; output cleanup failed: {cleanup}", {'close': cleanup}) from cleanup
             raise
         if not getattr(stream, 'reports_output_underflows', True):
             self.output_underflows = None
@@ -194,10 +202,18 @@ class Player:
             self._wake.set()
             try:
                 if self._stream is not None:
+                    failures = {}
                     try:
                         self._stream.stop()
+                    except Exception as error:
+                        failures['stop'] = error
                     finally:
-                        self._stream.close()
+                        try:
+                            self._stream.close()
+                        except Exception as error:
+                            failures['close'] = error
+                    if failures:
+                        raise _OutputCleanupError('; '.join(map(str, failures.values())), failures)
             finally:
                 if self._producer.is_alive():
                     self._producer.join(timeout=5)
@@ -225,17 +241,18 @@ class Player:
 
         return audio_devices.output_devices(query), hostapis
 
-    def _rollback_device(self, previous: Device) -> tuple[Device, int | None]:
+    def _reopen_device(self) -> tuple[Device | None, int | None]:
+        previous, hostapi = self._device, self._device_hostapi
+        if previous is None:
+            return None, None
         devices, hostapis = self._device_inventory()
-        name = previous.name.casefold()
-        matching = next((d for d in devices if d.index == previous.index and d.name.casefold() == name), None)
-        if matching and (self._device_hostapi is None or hostapis[matching.index] == self._device_hostapi):
-            return matching, hostapis[matching.index]
-        moved = audio_devices.find(previous.name, devices, unique=True)
-        if moved is not None and moved.index != previous.index:
-            hostapi = hostapis[moved.index]
-            if self._device_hostapi is None or hostapi is None or hostapi == self._device_hostapi:
-                return moved, hostapi
+        same_api = [device for device in devices if hostapis[device.index] == hostapi]
+        same_index = audio_devices.find(previous.name, [d for d in same_api if d.index == previous.index])
+        if same_index is not None:
+            return same_index, hostapi
+        # A name can move to another index only when the host API is known and matches.
+        if hostapi is not None and (moved := audio_devices.find(previous.name, same_api, unique=True)) is not None:
+            return moved, hostapi
         raise DeviceError(f"“{previous.name}” is unavailable or ambiguous")
 
     def set_device(self, device: str | int | None) -> None:
@@ -275,7 +292,7 @@ class Player:
                     message = f"Cannot switch audio output: {error}"
                     if had_output and self._stream is None:
                         try:
-                            previous, previous_hostapi = self._rollback_device(self._device) if self._device else (None, None)
+                            previous, previous_hostapi = self._reopen_device()
                             self._start_output(previous)
                         except Exception as rollback:
                             message += f"; previous output could not reopen: {rollback}"
@@ -316,8 +333,13 @@ class Player:
                         self.now = replace(self._metadata(), bar=0)
                         self._explicit_index = self.playlist_index
                         self._explicit_piece = self.engine.piece
+                device, hostapi = self._reopen_device()
                 self.playing = playing
-                self.start()  # Reuse the live producer, never restart a one-shot Thread.
+                if device is None:
+                    self.start()
+                else:
+                    self._start_output(device)  # Reuse the live producer.
+                    self._device, self._device_hostapi = device, hostapi
             except Exception as error:
                 self.playing = False
                 self._restart_error = f"Panic restart failed: {error}"
