@@ -342,7 +342,9 @@ def _run(paths, lock, report):
         try:
             player.close()
         except Exception as cleanup:
-            message = str(cleanup)
+            # start() already includes the first cleanup failure if it retained the stream.
+            if error.__cause__ is None or str(cleanup) != str(error.__cause__):
+                message += f"; shutdown cleanup failed: {cleanup}"
         report({"error": message, "audio": True})
         return 1
     try:

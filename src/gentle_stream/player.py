@@ -66,6 +66,7 @@ class Player:
         self._remember_device = remember_device
         self._choice_loaded = not remember_device
         self._device: Device | None = None
+        self._device_hostapi: int | None = None
         self.device_missing: str | None = None
         self._prebuffer = int(prebuffer * engine.sr)
         self._blocksize = blocksize
@@ -113,7 +114,8 @@ class Player:
             try:
                 if remembered:
                     try:
-                        selected = audio_devices.find(remembered, self.devices(), unique=True)
+                        devices, hostapis = self._device_inventory()
+                        selected = audio_devices.find(remembered, devices, unique=True)
                     except DeviceError:
                         selected = None
                     if selected is not None:
@@ -123,7 +125,7 @@ class Player:
                             if self._stream is not None:  # Failed cleanup; do not open a second output.
                                 raise
                         else:
-                            self._device = selected
+                            self._device, self._device_hostapi = selected, hostapis[selected.index]
                             return
                     self.device_missing = remembered
                 self._start_output(self._device)
@@ -161,7 +163,7 @@ class Player:
                 stream.close()
             except Exception as cleanup:
                 self._stream = stream  # Its callback stays disabled; keep the handle for cleanup/retry.
-                raise RuntimeError(f"{error}; output cleanup failed: {cleanup}") from error
+                raise RuntimeError(f"{error}; output cleanup failed: {cleanup}") from cleanup
             raise
         if not getattr(stream, 'reports_output_underflows', True):
             self.output_underflows = None
@@ -209,6 +211,33 @@ class Player:
         self._require_device_selection()
         return audio_devices.output_devices()
 
+    def _device_inventory(self) -> tuple[list[Device], dict[int, int | None]]:
+        """Capture native identity from the same enumeration without changing the public Device schema."""
+        hostapis = {}
+
+        def query(kind=None):
+            native_query = audio_devices._query()
+            if kind is not None:
+                return native_query(kind=kind)
+            rows = list(native_query())
+            hostapis.update((int(row.get('index', i)), row.get('hostapi')) for i, row in enumerate(rows))
+            return rows
+
+        return audio_devices.output_devices(query), hostapis
+
+    def _rollback_device(self, previous: Device) -> tuple[Device, int | None]:
+        devices, hostapis = self._device_inventory()
+        name = previous.name.casefold()
+        matching = next((d for d in devices if d.index == previous.index and d.name.casefold() == name), None)
+        if matching and (self._device_hostapi is None or hostapis[matching.index] == self._device_hostapi):
+            return matching, hostapis[matching.index]
+        moved = audio_devices.find(previous.name, devices, unique=True)
+        if moved is not None and moved.index != previous.index:
+            hostapi = hostapis[moved.index]
+            if self._device_hostapi is None or hostapi is None or hostapi == self._device_hostapi:
+                return moved, hostapi
+        raise DeviceError(f"“{previous.name}” is unavailable or ambiguous")
+
     def set_device(self, device: str | int | None) -> None:
         """Move the current queue to a different device; None follows the system default."""
         if device is not None and (not isinstance(device, (str, int)) or isinstance(device, bool)):
@@ -217,14 +246,19 @@ class Player:
             if self._stopping.is_set():
                 raise ValueError("player is closed")
             self._require_device_selection()
-            selected = None if device is None else audio_devices.resolve(device, self.devices())
+            selected, hostapi = None, None
+            if device is not None:
+                devices, hostapis = self._device_inventory()
+                selected = audio_devices.resolve(device, devices)
+                hostapi = hostapis[selected.index]
             self._choice_loaded = True
             had_output = self._stream is not None and self._restart_error is None
             if self._producer.ident is None and self._stream is None:
-                self._device = selected  # Before start, choose the target without saving an untested output.
+                # Before start, choose the target without saving an untested output.
+                self._device, self._device_hostapi = selected, hostapi
                 return
             # PortAudio binds the system default at open time, so None must reopen even if unchanged.
-            if selected is None or not had_output or selected != self._device:
+            if selected is None or not had_output or (selected, hostapi) != (self._device, self._device_hostapi):
                 with self._callback_lock:
                     self._output_generation += 1
                     self._gain = self.level = 0.0
@@ -241,23 +275,17 @@ class Player:
                     message = f"Cannot switch audio output: {error}"
                     if had_output and self._stream is None:
                         try:
-                            previous = self._device
-                            if previous is not None:
-                                # A device index may have been recycled since opening the old stream.
-                                name = previous.name
-                                previous = audio_devices.find(name, self.devices(), unique=True)
-                                if previous is None:
-                                    raise DeviceError(f"“{name}” is unavailable or ambiguous")
+                            previous, previous_hostapi = self._rollback_device(self._device) if self._device else (None, None)
                             self._start_output(previous)
                         except Exception as rollback:
                             message += f"; previous output could not reopen: {rollback}"
                         else:
-                            self._device = previous
+                            self._device, self._device_hostapi = previous, previous_hostapi
                             raise DeviceError(message) from error
                     self.playing = False
                     self._restart_error = message
                     raise DeviceError(message) from error
-            self._device, self.device_missing = selected, None
+            self._device, self._device_hostapi, self.device_missing = selected, hostapi, None
             if self._remember_device:
                 try:
                     audio_devices.save_choice(self.device)

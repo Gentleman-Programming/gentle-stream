@@ -234,6 +234,45 @@ def test_duplicate_device_name_warns_and_falls_back_to_default(probe, monkeypatc
         assert opened == [0, 9, 0] and sha() == saved
 
 
+@pytest.mark.parametrize('hostapi_change', [None, False, True])
+def test_rollback_checks_host_api_before_reusing_duplicate_name_index(probe, monkeypatch, hostapi_change):
+    hostapis = {7: 0, 9: 1}
+
+    def duplicates(kind=None):
+        rows = [query('output'), {'index': 11, 'name': 'Other', 'max_output_channels': 2}]
+        rows += [dict(index=i, name='USB Audio', max_output_channels=2,
+                      **({'hostapi': api} if hostapi_change is not None else {})) for i, api in hostapis.items()]
+        return rows[0] if kind else rows
+
+    monkeypatch.setattr(audio_devices, '_query', lambda: duplicates)
+    opened = []
+
+    def factory(**kw):
+        if kw.get('device') == 11:
+            if hostapi_change:
+                hostapis[9] = 2
+            raise OSError('target busy')
+        sink = Sink(**kw)
+        opened.append(sink)
+        return sink
+
+    with session(factory, True) as p:
+        p.set_device(9)
+        saved = sha()
+        outcome = daemon.handle(p, {'cmd': 'set_device', 'device': 11})
+        state = daemon.handle(p, {'cmd': 'state'})['state']
+        expected = 'Cannot switch audio output: target busy'
+        if hostapi_change:
+            expected += '; previous output could not reopen: “USB Audio” is unavailable or ambiguous'
+            assert [s.index for s in opened] == [None, 9] and not any(s.active for s in opened)
+            assert (state['device'], state['playing'], state['audio_output_error']) == (None, False, expected)
+        else:
+            assert [s.index for s in opened] == [None, 9, 9]
+            assert [s.index for s in opened if s.active] == [9]
+            assert (state['device'], state['playing']) == ('USB Audio', True)
+        assert outcome == {'ok': False, 'error': expected} and sha() == saved
+
+
 @pytest.mark.parametrize('can_restore', [True, False])
 def test_rollback_does_not_claim_old_device_for_reused_index(probe, monkeypatch, can_restore):
     inventory = {0: 'Monitor', 7: 'Headset A', 9: 'Headset B'}
@@ -382,7 +421,8 @@ class BrokenSink(Sink):
 def test_start_and_cleanup_failure_still_emit_structured_audio_error(probe):
     command, env = daemon_command(BrokenSink)
     proc = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
-    assert (proc.returncode, proc.stdout, proc.stderr) == (1, '{"error": "sink closure failed", "audio": true}\n', '')
+    expected = '{"error": "sink vanished while starting; output cleanup failed: sink closure failed", "audio": true}\n'
+    assert (proc.returncode, proc.stdout, proc.stderr) == (1, expected, '')
     assert (probe / 'events').read_text(encoding='utf-8').splitlines() == ['start', 'close', 'stop', 'close']
     paths = daemon.Paths(daemon.runtime_dir())
     assert not paths.sock.exists() and not paths.key.exists()
