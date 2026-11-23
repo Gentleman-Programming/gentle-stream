@@ -49,12 +49,12 @@ class SettingsScreen(ModalScreen):
     SettingsScreen VerticalScroll { height: 1fr; min-height: 1; scrollbar-size-vertical: 1;
         padding-right: 1; }
     SettingsScreen .setting-section { height: 1; margin-top: 1; color: $foreground; text-style: bold; }
-    SettingsScreen .setting-row { height: auto; }
+    SettingsScreen .setting-row { height: auto; margin-bottom: 1; }
     SettingsScreen .setting-label { width: 1fr; padding-right: 1; color: $text-muted; }
-    SettingsScreen Input, SettingsScreen Select { width: 16; }
+    SettingsScreen Input, SettingsScreen Select, SettingsScreen Switch { width: 16; }
     SettingsScreen Input.-textual-compact, SettingsScreen Select.-textual-compact > SelectCurrent {
         padding: 0 1; background: $panel; }
-    SettingsScreen Switch, SettingsScreen Switch:focus { width: 6; margin-right: 10;
+    SettingsScreen Switch, SettingsScreen Switch:focus {
         padding: 0 1; border: none; background: $panel; }
     SettingsScreen Switch:hover { background-tint: $foreground 10%; }
     SettingsScreen Switch:focus { background-tint: $foreground 15%; text-style: bold underline; }

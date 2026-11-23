@@ -77,6 +77,9 @@ async def test_settings_keeps_fields_and_actions_legible(ui, size):
         scroll = screen.query_one(VerticalScroll)
         for key in ('theme', 'background', 'accent', 'style', 'palette', 'height'):
             assert scroll.content_region.contains_region(screen.query_one('#pref-' + key).region), key
+        fields = [row.children[-1].region for row in screen.query('.setting-row')]
+        assert len({(field.x, field.width, field.height) for field in fields}) == 1
+        assert all(lower.y > upper.bottom for upper, lower in zip(fields, fields[1:]))
         actions = screen.query_one('#settings-actions')
         assert [str(button.label) for button in actions.query(Button)] == [
             'Preview', 'Defaults', 'Close', 'Save & close',
