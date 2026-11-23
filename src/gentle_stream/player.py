@@ -80,7 +80,8 @@ class Player:
         self._stream = None
         self._control_lock = threading.RLock()  # Stream hooks run here, never in the callback.
         self._callback_lock = threading.Lock()  # Retire a callback before replacing its queue/state.
-        self._generation = 0
+        self._output_generation = 0
+        self._mood_generation = 0
         self._restart_error: str | None = None
         self.playing = True
         self.volume = float(np.clip(volume, 0, 1))
@@ -129,13 +130,13 @@ class Player:
             except Exception:
                 self.playing = False
                 with self._callback_lock:
-                    self._generation += 1
+                    self._output_generation += 1
                 raise
 
     def _start_output(self, device: Device | None) -> None:
         """Open one sink on the existing queue. Failed starts must not consume PCM."""
         ready = threading.Event()
-        generation = self._generation
+        generation = self._output_generation
 
         def callback(outdata, *args):
             if ready.is_set():
@@ -186,14 +187,18 @@ class Player:
     def close(self) -> None:
         with self._control_lock:
             with self._callback_lock:
-                self._generation += 1
+                self._output_generation += 1
             self._stopping.set()
             self._wake.set()
-            if self._stream is not None:
-                self._stream.stop()
-                self._stream.close()
-            if self._producer.is_alive():
-                self._producer.join(timeout=5)
+            try:
+                if self._stream is not None:
+                    try:
+                        self._stream.stop()
+                    finally:
+                        self._stream.close()
+            finally:
+                if self._producer.is_alive():
+                    self._producer.join(timeout=5)
 
     # ------------------------------------------------------------ controls
     def _require_device_selection(self) -> None:
@@ -221,7 +226,7 @@ class Player:
             # PortAudio binds the system default at open time, so None must reopen even if unchanged.
             if selected is None or not had_output or selected != self._device:
                 with self._callback_lock:
-                    self._generation += 1
+                    self._output_generation += 1
                     self._gain = self.level = 0.0
                     self._tail[:] = 0
                 try:
@@ -236,10 +241,18 @@ class Player:
                     message = f"Cannot switch audio output: {error}"
                     if had_output and self._stream is None:
                         try:
-                            self._start_output(self._device)
+                            previous = self._device
+                            if previous is not None:
+                                # A device index may have been recycled since opening the old stream.
+                                name = previous.name
+                                previous = audio_devices.find(name, self.devices(), unique=True)
+                                if previous is None:
+                                    raise DeviceError(f"“{name}” is unavailable or ambiguous")
+                            self._start_output(previous)
                         except Exception as rollback:
                             message += f"; previous output could not reopen: {rollback}"
                         else:
+                            self._device = previous
                             raise DeviceError(message) from error
                     self.playing = False
                     self._restart_error = message
@@ -257,8 +270,9 @@ class Player:
             if self._stopping.is_set():
                 raise ValueError("player is closed")
             playing = self.playing
+            self._mood_generation += 1
             with self._callback_lock:
-                self._generation += 1
+                self._output_generation += 1
                 now = self.now
             self.playing = False
             try:
@@ -324,16 +338,16 @@ class Player:
 
     @contextmanager
     def stage_style(self, style: Style):
-        """Prepare off-thread; yield a nonblocking commit fenced against transport restart."""
+        """Prepare off-thread; yield a nonblocking commit fenced against Panic, not sink changes."""
         with self._control_lock:
-            generation = self._generation
+            generation = self._mood_generation
         prepared = self.engine.prepare_playlist((style,)).songs[0]
 
         def commit():
             if not self._control_lock.acquire(blocking=False):
                 return False
             try:
-                if generation != self._generation or self._stopping.is_set():
+                if generation != self._mood_generation or self._stopping.is_set():
                     return None  # obsolete; never publish success
                 if not self._render_lock.acquire(blocking=False):
                     return False
@@ -570,7 +584,7 @@ class Player:
 
     def _callback(self, outdata, frames, time_info, status, generation=None) -> None:
         with self._callback_lock:
-            if generation is not None and generation != self._generation:
+            if generation is not None and generation != self._output_generation:
                 outdata[:] = 0
                 return
             self._render_callback(outdata, frames, time_info, status)

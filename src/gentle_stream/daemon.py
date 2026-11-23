@@ -337,9 +337,13 @@ def _run(paths, lock, report):
         return 1
     try:
         player.start()
-    except Exception as e:  # PortAudio missing, no output device, device busy...
-        player.close()
-        report({"error": str(e), "audio": True})
+    except Exception as error:  # PortAudio missing, no output device, device busy...
+        message = str(error)
+        try:
+            player.close()
+        except Exception as cleanup:
+            message = str(cleanup)
+        report({"error": message, "audio": True})
         return 1
     try:
         key = authkey(paths)
