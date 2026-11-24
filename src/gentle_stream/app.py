@@ -11,23 +11,25 @@ from __future__ import annotations
 
 from rich.text import Text
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.markup import escape
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
-from textual.widgets import Footer, Header, Input, OptionList, Static
+from textual.widgets import Button, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
+from .appearance import Preferences, PreferenceStore
+from .appearance_ui import AppearanceSettings
 from .bridge import GentleShell, InterpretError, Usage
 from .player import Player
 from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 from .style import Style
+from .visualizer import render_spectrum
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
-BLOCKS = " ▁▂▃▄▅▆▇█"
 
 # gentlemanprogramming.com palette
 GENTLEMAN_THEME = Theme(
@@ -63,8 +65,6 @@ GENTLEMAN_THEME = Theme(
         "scrollbar-background": "#1a1218",
     },
 )
-# spectrum rows, top to bottom: rose peaks over a muted base
-SPECTRUM_COLORS = ("#ff76c3", "#f095c8", "#ffb1dd", "#a78e9b", "#76616b")
 
 
 def model_label(model: str | None) -> str:
@@ -76,20 +76,34 @@ class Spectrum(Static):
 
     MIN_ROWS = 5
 
-    def __init__(self, player: Player, **kw):
+    def __init__(self, player: Player, style: str, **kw):
         super().__init__(**kw)
         self.player = player
+        self.preferences = Preferences(style=style)
+        self._levels = None
 
     def tick(self) -> None:
         width = max(8, self.size.width or 48)
-        rows_n = max(self.MIN_ROWS, self.size.height or self.MIN_ROWS)
-        levels = self.player.spectrum(width) * rows_n * 8
-        rows = []
-        for i, r in enumerate(range(rows_n - 1, -1, -1)):    # i = 0 is the top row
-            color = SPECTRUM_COLORS[min(len(SPECTRUM_COLORS) - 1, i * len(SPECTRUM_COLORS) // rows_n)]
-            cell = (levels - r * 8).clip(0, 8).astype(int)
-            rows.append(Text("".join(BLOCKS[c] for c in cell), style=color))
-        self.update(Text("\n").join(rows))
+        self._levels = self.player.spectrum(width)
+        self._draw()
+
+    def set_style(self, style: str) -> None:
+        self.preferences = Preferences(style=style)
+        self._draw()
+
+    def _draw(self) -> None:
+        if self._levels is not None:
+            rows = max(self.MIN_ROWS, self.size.height or self.MIN_ROWS)
+            columns = len(self._levels) if self.preferences.style == 'segmented' else None
+            self.update(render_spectrum(self._levels, rows, self.preferences, columns=columns))
+
+
+class ControlsBar(Horizontal):
+    def on_resize(self, event) -> None:
+        # Reserve half the bar around the 18-cell center. The right half needs
+        # 24 for volume, 10 for Settings, and two 2-cell group gaps.
+        for settings in self.query('#settings'):
+            settings.display = event.size.width >= 18 + 2 * (24 + 10 + 4)
 
 
 class ModelPicker(ModalScreen[str | None]):
@@ -257,21 +271,40 @@ class StreamApp(App):
     CSS = """
     Screen { background: $background; }
     Header { background: #1a1218; color: $primary; }
-    #panel { padding: 1 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; }
+    #panel { padding: 0 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; }
     #title { text-style: bold; color: $primary; }
     #details, #model { color: $text-muted; }
     #mood-line { color: $accent; text-style: italic; }
-    #spectrum { height: 1fr; min-height: 5; margin: 1 0; }
+    #spectrum { height: 1fr; min-height: 5; margin-top: 1; }
     #state { color: $text-muted; }
     #status { margin-top: 1; }
-    #mood { dock: bottom; margin: 0 1 1 1; border: round $panel; background: $surface; }
+    #mood { margin: 0 1 1 1; border: round $panel; background: $surface; }
     #mood:focus { border: round $primary; }
+    #controls { height: 3; margin: 0 1; background: #1a1218; }
+    #controls > Horizontal { width: 1fr; height: 100%; }
+    /* Equal flexible side columns keep the fixed transport centered regardless of their contents. */
+    #controls > #transport { width: auto; }
+    #volume-controls { align-horizontal: right; }
+    #controls Button {
+        width: 8; min-width: 0; height: 3; padding: 0;
+        border: round $text-muted; background: $background; color: $foreground;
+    }
+    #controls #playlist { width: 10; }
+    #controls #settings { width: 10; margin-left: 2; display: none; }
+    #controls #play-pause { border: round $primary; color: $primary; }
+    #controls Button:hover, #controls Button:focus,
+    #controls #play-pause:hover, #controls #play-pause:focus {
+        border: round $primary; background: $primary; color: $background; background-tint: transparent;
+    }
+    #next { margin-left: 2; }
+    #volume { width: 4; height: 1; margin: 1 2; text-align: center; color: $foreground; }
     """
     BINDINGS = [
         Binding("space", "toggle", "Play/Pause"),
         Binding("n", "next", "Next"),
         Binding("slash", "focus_mood", "Mood"),
         Binding("m", "pick_model", "Model"),
+        Binding("f2", "appearance_settings", "Appearance Settings"),
         Binding("s", "save_preset", "Save"),
         Binding("p", "pick_preset", "Saved"),
         Binding("plus,equals_sign", "volume(5)", "Vol +5"),
@@ -288,29 +321,51 @@ class StreamApp(App):
         super().__init__()
         self.player, self.shell, self.initial_mood = player, shell, initial_mood
         self.presets = presets if presets is not None else PresetStore()
+        self.appearance = PreferenceStore()
         self.session_usage: Usage | None = None  # tokens and cost of every successful interpretation so far
         self._keep_playing = False                # `b` leaves the music playing, `q` stops it
         self.register_theme(GENTLEMAN_THEME)
         self.theme = GENTLEMAN_THEME.name
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(icon="?")
         with Vertical(id="panel"):
             yield Static(id="title")
             yield Static(id="details")
             yield Static(id="mood-line")
-            yield Spectrum(self.player, id="spectrum")
+            yield Spectrum(self.player, self.appearance.load().style, id="spectrum")
             yield Static(id="state")
             yield Static(id="model")
-            yield Static("Press / to describe a mood.", id="status")
+            yield Static("Press / to describe a mood. Ctrl+P opens commands.", id="status")
         yield Input(placeholder="Describe a feeling, a concept, a place… then Enter (Esc to leave)", id="mood")
-        yield Footer()
+        with ControlsBar(id="controls"):
+            with Horizontal():
+                yield Button("Playlist", id="playlist", action="app.pick_preset", tooltip="Saved prompts (p)")
+            with Horizontal(id="transport"):
+                yield Button("Pause", id="play-pause", action="app.toggle", tooltip="Play / pause (Space)")
+                yield Button("Next", id="next", action="app.next", tooltip="Next piece (n)")
+            with Horizontal(id="volume-controls"):
+                yield Button("−", id="volume-down", action="app.volume(-5)", tooltip="Volume down by 5% (-)")
+                yield Static(id="volume")
+                yield Button("+", id="volume-up", action="app.volume(5)", tooltip="Volume up by 5% (+)")
+                yield Button("Settings", id="settings", action="app.appearance_settings", tooltip="Appearance Settings (F2)")
+
+    def get_system_commands(self, screen):
+        yield from super().get_system_commands(screen)
+        yield SystemCommand("Appearance Settings", "Choose the spectrum style (F2)", self.action_appearance_settings)
+        yield SystemCommand("Choose model", "Choose the mood interpretation model (m)", self.action_pick_model)
+        yield SystemCommand("Save current prompt", "Save what is playing (s)", self.action_save_preset)
+        yield SystemCommand("Back", "Leave with music still playing (b)", self.action_back)
 
     def on_mount(self) -> None:
         # keep references: the timer also fires while a modal is on top or the app is shutting down,
         # when queries would search another screen
         self._w = {name: self.query_one(f"#{name}") for name in ("title", "details", "mood-line", "spectrum",
-                                                                 "state", "model", "status")}
+                                                                 "state", "model", "status", "volume")}
+        self._play_pause = self.query_one("#play-pause", Button)
+        # Textual's default Button adds one cell on each side; its CSS parser rejects zero line-pad.
+        for button in self.query("#controls Button"):
+            button.styles.line_pad = 0
         self.player.start()
         self._show_model()
         self._tick()
@@ -338,7 +393,9 @@ class StreamApp(App):
         w["details"].update(now.style.summary())
         w["mood-line"].update(f"“{now.style.mood}”" if now.style.mood else "")
         state = "[b $success]▶ Playing[/]" if p.playing else "[b $warning]⏸ Paused[/]"
-        w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1} · vol {round(p.volume * 100)}%")
+        w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1}")
+        self._play_pause.label = "Pause" if p.playing else "Play"
+        w["volume"].update(f"{round(p.volume * 100)}%")
 
     def _show_model(self) -> None:
         session = f" · session: {self.session_usage.format()}" if self.session_usage else ""
@@ -370,6 +427,18 @@ class StreamApp(App):
 
     def action_leave_mood(self) -> None:
         self.set_focus(None)
+
+    def action_appearance_settings(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        spectrum = self._w["spectrum"]
+        style = self.appearance.load().style
+
+        def saved(new_style: str | None) -> None:
+            if new_style is not None:
+                spectrum.set_style(new_style)
+
+        self.push_screen(AppearanceSettings(self.appearance, style), saved)
 
     def action_pick_model(self) -> None:
         def chosen(model: str | None) -> None:

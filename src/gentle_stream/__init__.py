@@ -10,6 +10,7 @@ CONTROLS = """controls:
   n        next piece with the same mood
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
   m        choose the model Gentle Shell uses
+  F2       open Appearance Settings (also in Ctrl+P commands)
   s        save what is playing under a name (prompt and style)
   p        saved prompts: Enter applies one instantly, d deletes it
   + / -    volume up / down by 5%
