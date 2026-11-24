@@ -92,6 +92,27 @@ async def test_volume_up_remains_visible_and_clear_of_center(width, inert_app, i
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('width', [40, 44])
+async def test_split_pane_puts_the_full_volume_group_on_its_own_row(width, inert_app):
+    app, player, shell, _ = inert_app
+    async with app.run_test(size=(72, 24)) as pilot:
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        bar = app.query_one('#controls').region
+        play, next_piece = [app.query_one(f'#{name}', Button).region for name in ('play-pause', 'next')]
+        down, value, up = [app.query_one(f'#{name}') for name in ('volume-down', 'volume', 'volume-up')]
+        assert abs(play.x + next_piece.right - (2 * bar.x + bar.width)) <= 1
+        assert next_piece.bottom <= down.region.y == up.region.y
+        assert bar.x <= down.region.x < value.region.x < up.region.x < up.region.right <= bar.right
+        assert up.region.bottom <= bar.bottom
+        assert await pilot.click('#volume-up')
+        assert player.volume == pytest.approx(0.85) and shell.calls == []
+        await pilot.resize_terminal(52, 24)
+        await pilot.pause()
+        assert app.query_one('#play-pause').region.y == up.region.y
+
+
+@pytest.mark.asyncio
 async def test_style_save_preserves_unknown_preferences(inert_app, isolated_config):
     app, _, shell, polls = inert_app
     path = isolated_config / "appearance.json"

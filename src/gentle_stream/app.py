@@ -103,6 +103,9 @@ class ControlsBar(Horizontal):
         # Keep both side columns equal around the 18-cell transport. Regular
         # volume needs 24 cells plus a 2-cell gap; Settings adds another 12.
         self.set_class(event.size.width < 18 + 2 * (24 + 2), 'compact-volume')
+        # Compact volume still needs 14 cells plus a gap. Stack it when a
+        # centered transport leaves less room than that in either side column.
+        self.set_class(event.size.width < 18 + 2 * (14 + 2), 'stacked-volume')
         for settings in self.query('#settings'):
             settings.display = event.size.width >= 18 + 2 * (24 + 10 + 4)
 
@@ -301,6 +304,13 @@ class StreamApp(App):
     #volume { width: 4; height: 1; margin: 1 2; text-align: center; color: $foreground; }
     #controls.compact-volume #volume-controls Button { width: 4; }
     #controls.compact-volume #volume { margin: 1 1; }
+    #controls.stacked-volume {
+        layout: grid; height: 6; grid-size: 3 2;
+        grid-columns: 1fr 18 1fr; grid-rows: 3 3;
+    }
+    #controls #volume-wrap { display: none; }
+    #controls.stacked-volume #volume-wrap { display: block; }
+    #controls.stacked-volume > #volume-controls { column-span: 3; align-horizontal: center; }
     """
     BINDINGS = [
         Binding("space", "toggle", "Play/Pause"),
@@ -347,6 +357,7 @@ class StreamApp(App):
             with Horizontal(id="transport"):
                 yield Button("Pause", id="play-pause", action="app.toggle", tooltip="Play / pause (Space)")
                 yield Button("Next", id="next", action="app.next", tooltip="Next piece (n)")
+            yield Static(id="volume-wrap")
             with Horizontal(id="volume-controls"):
                 yield Button("−", id="volume-down", action="app.volume(-5)", tooltip="Volume down by 5% (-)")
                 yield Static(id="volume")
