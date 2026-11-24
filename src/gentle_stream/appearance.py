@@ -73,41 +73,55 @@ def _unique_fields(pairs):
     return values
 
 
+def _invalid_constant(value):
+    raise ValueError(f'invalid JSON constant: {value}')
+
+
 class PreferenceStore:
     def __init__(self):
         self.path = default_path().with_name('appearance.json')
         self.error: str | None = None
 
-    def load(self) -> Preferences:
+    def _read(self) -> tuple[Preferences, dict]:
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8'), object_pairs_hook=_unique_fields,
+                              parse_constant=_invalid_constant)
+        except FileNotFoundError:
+            preferences = Preferences()
+            return preferences, asdict(preferences)
+        if not isinstance(data, dict) or set(data) != {'version', 'preferences'}:
+            raise ValueError('unexpected format')
+        if type(data['version']) is not int or data['version'] != 1:
+            raise ValueError('unsupported version')
+        record = data['preferences']
+        known = {field.name for field in fields(Preferences)}
+        if not isinstance(record, dict) or not known <= record.keys():
+            raise ValueError('missing preference fields')
+        return Preferences(**{key: record[key] for key in known}).validate(), record
+
+    def _load_record(self) -> tuple[Preferences, dict]:
         self.error = None
         try:
-            data = json.loads(self.path.read_text(encoding='utf-8'), object_pairs_hook=_unique_fields)
-            if not isinstance(data, dict) or set(data) != {'version', 'preferences'}:
-                raise ValueError('unexpected format')
-            if type(data['version']) is not int or data['version'] != 1:
-                raise ValueError('unsupported version')
-            record = data['preferences']
-            if not isinstance(record, dict) or set(record) != set(asdict(Preferences())):
-                raise ValueError('unexpected preference fields')
-            return Preferences(**record).validate()
-        except FileNotFoundError:
-            return Preferences()
+            return self._read()
         except (OSError, ValueError, RecursionError):
             self.error = READ_ERROR
-            return Preferences()
+            return Preferences(), {}
+
+    def load(self) -> Preferences:
+        return self._load_record()[0]
 
     def save_style(self, style: str) -> None:
-        # Re-read through the desktop-format validator; the terminal owns only the style field.
-        preferences = self.load()
+        # Re-read through the same validator, retaining fields this terminal does not own.
+        preferences, record = self._load_record()
         if self.error:
             raise PreferenceError(self.error)
-        preferences = replace(preferences, style=style).validate()
+        record['style'] = replace(preferences, style=style).validate().style
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, name = tempfile.mkstemp(dir=self.path.parent, prefix='.appearance-', suffix='.tmp')
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                    json.dump({'version': 1, 'preferences': asdict(preferences)}, stream, indent=2)
+                    json.dump({'version': 1, 'preferences': record}, stream, indent=2)
                     stream.write('\n')
                     stream.flush()
                     os.fsync(stream.fileno())

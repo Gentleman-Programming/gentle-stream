@@ -100,8 +100,9 @@ class Spectrum(Static):
 
 class ControlsBar(Horizontal):
     def on_resize(self, event) -> None:
-        # Reserve half the bar around the 18-cell center. The right half needs
-        # 24 for volume, 10 for Settings, and two 2-cell group gaps.
+        # Keep both side columns equal around the 18-cell transport. Regular
+        # volume needs 24 cells plus a 2-cell gap; Settings adds another 12.
+        self.set_class(event.size.width < 18 + 2 * (24 + 2), 'compact-volume')
         for settings in self.query('#settings'):
             settings.display = event.size.width >= 18 + 2 * (24 + 10 + 4)
 
@@ -298,6 +299,8 @@ class StreamApp(App):
     }
     #next { margin-left: 2; }
     #volume { width: 4; height: 1; margin: 1 2; text-align: center; color: $foreground; }
+    #controls.compact-volume #volume-controls Button { width: 4; }
+    #controls.compact-volume #volume { margin: 1 1; }
     """
     BINDINGS = [
         Binding("space", "toggle", "Play/Pause"),
