@@ -18,6 +18,7 @@
 
 <p>
 <a href="#get-started"><strong>Get started</strong></a> &bull;
+<a href="#demo"><strong>Demo</strong></a> &bull;
 <a href="#terminal-preview"><strong>Terminal screenshot</strong></a> &bull;
 <a href="docs/player-interfaces.md#native-windows-desktop-preview"><strong>Windows desktop preview</strong></a> &bull;
 <a href="https://gentlemanprogramming.com/"><strong>Website</strong></a> &bull;
@@ -40,6 +41,14 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 </div>
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
+## Demo
+
+https://github.com/user-attachments/assets/60bed6fc-0c97-419e-8bc3-278c5a9967f0
+
+*2:35 · Spanish captions · Instrumental music · No voiceover.*
+
+If GitHub cannot load the video, see the [terminal screenshot](#terminal-preview).
 
 ## Features
 
