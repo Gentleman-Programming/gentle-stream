@@ -222,6 +222,38 @@ def _check_voices(inst):
     assert not np.allclose(open_[:n], other[:n])                # the two takes differ
 
 
+@pytest.mark.parametrize("tone,max_tail_ratio", [("piano", 0.33), ("rhodes", 0.23)])
+@pytest.mark.parametrize("take", [0, 1])
+def test_procedural_distorted_palm_mute_leaves_room_before_next_sixteenth(tone, max_tail_ratio, take):
+    inst = ROCK.instruments(np.random.default_rng(19), SR, None)
+    args = ((40, 47, 52), 0.10, 0.85, tone, True, take)
+    chug = inst.guitar(*args)
+    assert chug is inst.guitar(*args)
+    assert len(chug) == int(0.13 * SR) and chug[0] == chug[-1] == 0
+    early, late = (np.sqrt(np.mean(chug[round(a * SR):round(b * SR)] ** 2))
+                   for a, b in ((0.010, 0.035), (0.065, 0.095)))
+    assert early > 0.05
+    assert 0 < late / early < max_tail_ratio
+
+
+def test_sampled_palm_mute_uses_the_existing_gm_voice_and_short_hold():
+    calls = []
+
+    class Shared:
+        def play(self, program, midi, hold, vel):
+            calls.append((program, midi, hold, vel))
+            return np.sin(2 * np.pi * 150 * np.arange(round(0.09 * SR)) / SR) * 0.1
+
+    inst = ROCK.instruments(np.random.default_rng(19), SR, Shared())
+    notes = (40, 47, 52)
+    args = (notes, 0.10, 0.85, "piano", True, 1)
+    chug = inst.guitar(*args)
+    assert chug is inst.guitar(*args)
+    program = samples.Program(30, velocity=(60, 115), tail=0.04, rms=0.15)
+    assert calls == [(program, midi, 0.05, 0.85 * 0.86) for midi in notes]
+    assert len(chug) == round(0.09 * SR) and chug[-1] == 0 and np.max(np.abs(chug)) > 0.1
+
+
 def test_clean_guitar_pluck_decays_and_releases_without_losing_its_cache():
     inst = ROCK.instruments(np.random.default_rng(19), SR, None)
     clean = inst.guitar((52,), 1.0, 0.9, "nylon")

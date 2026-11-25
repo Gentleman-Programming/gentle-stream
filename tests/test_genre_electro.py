@@ -7,7 +7,7 @@ import pytest
 from gentle_stream import genres
 from gentle_stream.composer import Composer
 from gentle_stream.genres.base import Piece
-from gentle_stream.synth import SR
+from gentle_stream.synth import SR, mtof
 from gentle_stream.style import Style
 
 G = genres.get("electro")
@@ -33,7 +33,7 @@ class _Recorder(Piece):
 
     def add(self, sig, t, pan=0.0, g=1.0):
         name, args, kw = sig
-        self.events.append((name, args, kw, t, g))
+        self.events.append((name, args, kw, t, g, pan))
 
 
 def _bars(style=STYLE, n=48, seed=7):
@@ -171,6 +171,23 @@ def test_bass_holds_the_line_in_quiet_sections():
         assert bass == sorted((round(n.beat, 3), n.midi) for n in p.bass)
 
 
+def test_bass_schedule_preserves_grid_gate_velocity_pan_and_gain():
+    beat = 60 / STYLE.bpm
+    bars = _bars(n=5)
+    expected = {
+        0: [(33, 2.375, 0.6, 0, 0.24, 0), (42, 0.475, 0.6, 3.5, 0.24, 0)],
+        4: [(33, 0.6, 0.9, 0, 0.30, 0), (33, 0.2, 0.75, 0.75, 0.30, 0),
+            (45, 0.2, 0.75, 1.25, 0.30, 0), (33, 0.4, 0.9, 2, 0.30, 0),
+            (33, 0.2, 0.75, 2.75, 0.30, 0), (45, 0.2, 0.9, 3, 0.30, 0),
+            (40, 0.4, 0.75, 3.5, 0.30, 0)],
+    }
+    for bar, notes in expected.items():
+        observed = [(m, dur / beat, vel, t / beat, gain, pan)
+                    for name, (m, dur, vel), _, t, gain, pan in
+                    (event for event in bars[bar][1] if event[0] == "bass")]
+        np.testing.assert_allclose(observed, notes, rtol=0, atol=1e-12)
+
+
 def test_short_syncopated_chord_stabs():
     beat = 60 / STYLE.bpm
     for p, ev in _section(_bars(), "A", "B"):
@@ -240,6 +257,61 @@ def _peak_freq(x, lo, hi):
     return f[band][np.argmax(spec[band])]
 
 
+@pytest.mark.parametrize("midi", [45, 57])
+def test_procedural_electro_bass_has_a_rounder_attack_and_less_bite(midi):
+    electro = G.instruments(np.random.default_rng(4), SR, None)
+    shared = genres.get("reggaeton").instruments(np.random.default_rng(4), SR, None)
+    rounded = electro.bass(midi, 0.25, 0.9)
+    original = shared.bass(midi, 0.25, 0.9)
+    assert len(rounded) == len(original) == int(0.28 * SR)
+    assert np.all(np.isfinite(rounded))
+    np.testing.assert_array_equal(rounded, electro.bass(midi, 0.25, 0.9))
+    assert np.all(rounded[int(0.275 * SR) + 1:] == 0)
+
+    def attack_ratio(x):
+        return _rms(x, 0, 0.003) / _rms(x, 0.08, 0.23)
+
+    def bite(x):
+        onset = x[:int(0.06 * SR)]
+        power = np.abs(np.fft.rfft(onset * np.hanning(len(onset)))) ** 2
+        freq = np.fft.rfftfreq(len(onset), 1 / SR)
+        return power[freq >= 1200].sum() / power.sum()
+
+    assert attack_ratio(rounded) < 0.75 * attack_ratio(original)
+    assert bite(rounded) < 0.75 * bite(original)
+    body = rounded[int(0.08 * SR):int(0.23 * SR)]
+    assert _peak_freq(body, 40, 400) == pytest.approx(mtof(midi), abs=SR / len(body))
+    assert 0.7 < _rms(rounded, 0.08, 0.23) / _rms(original, 0.08, 0.23) < 1.3
+
+
+@pytest.mark.parametrize(("midi", "min_harmonics", "liked_attack"), [
+    (33, 0.398, 0.245), (45, 0.35, 0.347), (57, 0.23, 0.429),
+])
+def test_procedural_electro_bass_keeps_note_harmonics_after_the_pluck(midi, min_harmonics, liked_attack):
+    inst = G.instruments(np.random.default_rng(4), SR, None)
+    x = inst.bass(midi, 0.25, 0.9)
+    body = x[int(0.08 * SR):int(0.18 * SR)]
+    t = np.arange(len(body)) / SR
+    window = np.hanning(len(body))
+    # Measure at multiples of the note itself, not at fixed FFT bins or in a broadband treble band.
+    partials = [2 * abs(np.dot(body * window, np.exp(-2j * np.pi * h * mtof(midi) * t))) / window.sum()
+                for h in range(1, 6)]
+    fundamental, *harmonics = partials
+    assert fundamental == pytest.approx(0.478, abs=0.005)
+    assert _rms(x, 0, 0.003) / _rms(x, 0.08, 0.18) == pytest.approx(liked_attack, abs=0.015)
+    assert np.linalg.norm(harmonics) / fundamental >= min_harmonics
+
+
+def test_shared_procedural_bass_keeps_its_original_waveform():
+    reggaeton = genres.get("reggaeton").instruments(np.random.default_rng(4), SR, None)
+    hiphop = genres.get("hiphop").instruments(np.random.default_rng(4), SR, None)
+    original = reggaeton.bass(45, 0.25, 0.9)
+    np.testing.assert_array_equal(hiphop.electronic.bass(45, 0.25, 0.9), original)
+    np.testing.assert_allclose(original[[220, 440, 880, 2200, 4400, 11000]],
+                               [-0.426364, 0.208255, 0.217551, -0.403999, 0.467496, -0.403088],
+                               rtol=0, atol=1e-6)
+
+
 def test_808_kick_is_boomy_pitched_and_long():
     inst = G.instruments(np.random.default_rng(2), SR, None)
     x = inst.kick()
@@ -281,6 +353,9 @@ def test_samples_backend_uses_gm_synths_and_the_tr808_kit():
     class Fake:
         def play(self, p, m, dur, vel=1.0):
             calls.append(("play", p.program, p.bank))
+            if p.program == 38:
+                assert p.bank == 0 and p.velocity == (70, 120) and p.tail == 0.04
+                assert p.rms == pytest.approx(0.27190950072377135, abs=1e-9, rel=0)
             return np.zeros(64)
 
         def hit(self, h, g=1.0):
