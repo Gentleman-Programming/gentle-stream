@@ -170,6 +170,22 @@ The terminal bar puts **Playlist** on the left, **Play/Pause** and **Next** in t
 | `b` | Back: leave the app and keep the music playing in the background |
 | `q` | Quit and stop the music (a running `gentle-shell` call is cancelled) |
 
+### Playlist transport API
+
+The in-process player and background player client accept an ordered playlist snapshot via
+`set_playlist(styles, start_index=0, name="", continuous=False)`. Selecting an entry preserves
+Play/Pause and queues it after buffered audio. The daemon keeps the queue across client detach and
+reattach, but does not persist it. `playlist_name` and `playlist_index` describe the selected or
+rendered entry; `now.playlist_name` and `now.playlist_index` follow audible playback.
+
+`previous()` wraps to the last entry from the first, and does nothing without a queue. After a
+selection, `set_continuous(True)` enables Repeat: Next advances in order, and reaching the end of a
+song advances automatically, wrapping back to the first entry. With Repeat off, Next generates a
+same-mood variation instead. Applying a new mood or saved prompt leaves the queue. `panic()` restarts
+the audible song from the beginning with its original composition, pause state, and volume. Clients
+can check `transport_parity_supported` before offering Repeat or restart with an older daemon.
+These are player APIs; the `ctl` commands and output formats are unchanged.
+
 ### Appearance Settings
 
 At 96 columns or wider, **Settings** appears to the right of volume without moving the centered transport. At narrower widths, use `F2` or `Ctrl+P` → **Appearance Settings**.

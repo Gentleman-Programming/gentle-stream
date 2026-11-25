@@ -7,7 +7,13 @@ Unix domain socket in a private runtime dir (`$XDG_RUNTIME_DIR/gentle-stream`, d
 key kept in a 0600 file. Messages are JSON (never pickle), one request and one response per call:
 
     {"cmd": "state", "bands": 48}   -> {"ok": true, "state": {...}}   (spectrum included when bands > 0)
-    {"cmd": "play" | "pause" | "toggle" | "next"}
+    {"cmd": "play" | "pause" | "toggle" | "next" | "previous" | "panic"}
+    {"cmd": "set_continuous", "enabled": true}  (requires a selected playlist to enable)
+    {"cmd": "set_playlist", "styles": [...Style.to_dict()...], "start_index": 0,
+     "name": "", "continuous": false}
+    Playlist selection is resident only; state includes the selected cursor and the audible cursor under "now".
+    Previous without a selection is a no-op. Continuous playlists advance on Next and wrap at song boundaries.
+    Panic restarts the audible song, not a selection that has yet to be heard.
     {"cmd": "set_volume", "volume": 0.5}
     {"cmd": "set_style", "style": {...Style.to_dict()...}}
     {"cmd": "stop"}                  -> {"ok": true}, then the process exits and every connection sees EOF
@@ -106,15 +112,14 @@ def _stream_factory():
 
 
 def state(player, bands: int = 0) -> dict:
-    now = player.now
     out = {
         "pid": os.getpid(),
         "playing": bool(player.playing),
         "volume": float(player.volume),
         "level": float(player.level),
         "backend": player.engine.backend,
-        "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar},
-        "style": player.style.to_dict(),
+        "transport_parity_supported": player.transport_parity_supported,
+        **player.playback_state(),
     }
     if bands > 0:
         out["spectrum"] = [round(float(v), 4) for v in player.spectrum_levels(min(bands, MAX_BANDS))]
@@ -129,8 +134,20 @@ def handle(player, request) -> dict:
         cmd = request["cmd"]
         if cmd == "state":
             return {"ok": True, "state": state(player, int(request.get("bands", 0)))}
-        if cmd in ("play", "pause", "toggle", "next"):
+        if cmd == "set_continuous":
+            player.set_continuous(request["enabled"])
+        elif cmd in ("play", "pause", "toggle", "next", "previous", "panic"):
             getattr(player, cmd)()
+        elif cmd == "set_playlist":
+            from .engine import Engine
+
+            styles = request["styles"]
+            if not isinstance(styles, list):
+                raise ValueError("playlist styles must be a list")
+            player.set_playlist(tuple(Engine.playlist_style(style) for style in styles),
+                                start_index=request.get("start_index", 0),
+                                name=request.get("name", ""),
+                                continuous=request.get("continuous", False))
         elif cmd == "set_volume":
             player.set_volume(float(request["volume"]))
         elif cmd == "set_style":

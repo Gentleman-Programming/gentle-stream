@@ -9,11 +9,12 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from .engine import SR, Engine
+from .engine import SR, Engine, Track
 from .style import Style
 
 RAMP_SECONDS = 0.03
@@ -31,6 +32,10 @@ class NowPlaying:
     style: Style
     piece: int
     bar: int
+    playlist_name: str | None = None
+    playlist_index: int | None = None
+    playlist_revision: int | None = None  # local identity, not part of the wire state
+    track: Track | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -66,6 +71,10 @@ class Player:
         self._stopping = threading.Event()
         self._producer = threading.Thread(target=self._produce, name="gentle-stream-producer", daemon=True)
         self._stream = None
+        self._stream_ticket = None
+        self._control_lock = threading.RLock()
+        self._callback_lock = threading.Lock()
+        self._restart_error = None
         self.playing = True
         self.volume = float(np.clip(volume, 0, 1))
         self._gain = 0.0
@@ -75,54 +84,171 @@ class Player:
         self._tail = np.zeros(SPECTRUM_SIZE, dtype=np.float32)
         self._window = np.hanning(SPECTRUM_SIZE).astype(np.float32)
         self._shown = np.zeros(0)        # last spectrum() result, for the gentle fall
-        self.now = NowPlaying(engine.style, engine.piece, 0)
+        self.now = NowPlaying(engine.style, engine.piece, 0, track=engine.track)
+        self._selection: tuple[int, int] | None = None  # explicit index and earliest matching audible piece
 
     # ------------------------------------------------------------ lifecycle
+    def _activate_stream(self, stream, ticket) -> None:
+        with self._callback_lock:
+            self._stream, self._stream_ticket = stream, ticket
+
+    def _retire_stream(self, *, cut: bool) -> None:
+        stream = self._stream
+        self._activate_stream(None, None)
+        if stream is not None:
+            try:
+                abort = getattr(stream, "abort", None) if cut else None
+                (abort or stream.stop)()
+            finally:
+                stream.close()
+
     def start(self) -> None:
         """Open the output stream and start rendering; calling it again is a no-op."""
-        if self._stream is not None:
-            return
-        self._stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
-                                     blocksize=self._blocksize, latency="high", callback=self._callback)
-        self._producer.start()
-        deadline = time.monotonic() + 5
-        while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.005)    # the first bar is ready before the device starts pulling
-        self._stream.start()
+        with self._control_lock:
+            if self._stopping.is_set():
+                raise ValueError("player is closed")
+            if self._stream is not None:
+                return
+            ticket = object()
+            stream = self._factory(samplerate=self.engine.sr, channels=2, dtype="float32",
+                                   blocksize=self._blocksize, latency="high",
+                                   callback=lambda *args: self._callback(*args, ticket=ticket))
+            try:
+                if self._producer.ident is None:
+                    self._producer.start()
+                deadline = time.monotonic() + 5
+                while self._buffered == 0 and self._producer.is_alive() and time.monotonic() < deadline:
+                    time.sleep(0.005)    # the first bar is ready before the stream starts pulling
+                stream.start()
+            except Exception:
+                stream.close()
+                raise
+            self._activate_stream(stream, ticket)
+            self._restart_error = None
 
     def close(self) -> None:
-        self._stopping.set()
-        self._wake.set()
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-        if self._producer.is_alive():
-            self._producer.join(timeout=5)
+        with self._control_lock:
+            self._stopping.set()
+            self._wake.set()
+            try:
+                self._retire_stream(cut=False)
+            finally:
+                if self._producer.is_alive():
+                    self._producer.join(timeout=5)
+
+    transport_parity_supported = True
 
     # ------------------------------------------------------------ controls
+    def panic(self) -> None:
+        """Cut and restart the audible song without changing volume or pause state."""
+        with self._control_lock:
+            if self._stopping.is_set():
+                raise ValueError("player is closed")
+            try:
+                self._retire_stream(cut=True)
+                with self._render_lock, self._lock:
+                    self.engine.restart(self.now.track)
+                    self._chunks.clear()
+                    self._offset = self._buffered = self.position = 0
+                    self.level = self._gain = 0.0
+                    self._tail[:] = 0
+                    self._shown = np.zeros(0)
+                    self.now = replace(self._metadata(), bar=0)
+                    self._selection = None if self.playlist_index is None else (self.playlist_index, self.now.piece)
+                self._wake.set()
+                self.start()
+            except Exception as error:
+                message = f"Panic restart failed: {error}"
+                if self._stream is None:
+                    self.playing = False
+                    self._restart_error = message
+                raise ValueError(message) from error
+
+    def set_continuous(self, enabled: bool) -> None:
+        with self._render_lock:
+            self.engine.set_continuous(enabled)
+
     def play(self) -> None:
-        self.playing = True
+        with self._control_lock:
+            if self._restart_error:
+                raise ValueError(self._restart_error + "; use Panic to retry")
+            self.playing = True
 
     def pause(self) -> None:
-        self.playing = False
+        with self._control_lock:
+            self.playing = False
 
     def toggle(self) -> None:
-        self.playing = not self.playing
+        with self._control_lock:
+            self.pause() if self.playing else self.play()
 
     def set_volume(self, volume: float) -> None:
         self.volume = float(np.clip(volume, 0, 1))
 
     def set_style(self, style: Style) -> None:
         """The new style starts at the next rendered bar, after the audio already buffered."""
-        self.engine.queue_style(style)
+        with self._render_lock:
+            self.engine.queue_style(style)
+            self._selection = None
+
+    def set_playlist(self, styles: Sequence[Style], start_index: int = 0, name: str = "",
+                     continuous: bool = False) -> None:
+        """Queue the selected song after buffered audio, preserving play/pause."""
+        with self._render_lock:
+            self.engine.set_playlist(styles, start_index, name, continuous)
+            self._selection = (start_index, self.engine.piece + 1)
+        self._wake.set()
+
+    @property
+    def playlist_name(self) -> str | None:
+        return self.engine.playlist_name
+
+    @property
+    def playlist_index(self) -> int | None:
+        """Selected/rendered cursor; now.playlist_index follows consumed audio."""
+        return self.engine.playlist_index
+
+    @property
+    def continuous(self) -> bool:
+        return self.engine.continuous
+
+    def _metadata(self) -> NowPlaying:
+        return NowPlaying(self.style, self.engine.piece, self.engine.bar - 1,
+                          self.playlist_name, self.playlist_index, self.engine.playlist_revision, self.engine.track)
 
     def next(self) -> None:
-        """A new piece with the same mood, right away: its first bar is rendered now and crossfaded over the
-        pending audio of the old piece, which is dropped. No gap, no jump."""
-        with self._render_lock:  # waits for a bar being rendered, so no old bar can be queued after this
-            self.engine.queue_next()
+        """Crossfade immediately to the next continuous-playlist entry or a same-mood variation."""
+        self._navigate()
+
+    def previous(self) -> None:
+        """Crossfade immediately to the previous entry, or do nothing without a playlist."""
+        self._navigate(previous=True)
+
+    def _navigate(self, previous: bool = False) -> None:
+        with self._render_lock:  # no old bar can be queued after this
+            if previous and self.playlist_index is None:
+                return
+            navigating = previous or self.continuous
+            if navigating:
+                # Producer lookahead can already have crossed the form boundary. Use the
+                # consumed song, unless a newer explicit selection is still unheard.
+                with self._lock:
+                    now = self.now
+                index = None
+                if self._selection is not None:
+                    index, piece = self._selection
+                    if now.playlist_revision == self.engine.playlist_revision and now.piece >= piece:
+                        index = now.playlist_index
+                if previous:
+                    self.engine.queue_previous(from_index=index)
+                else:
+                    self.engine.queue_next(from_index=index)
+            else:
+                self.engine.queue_next()
             audio = self.engine.render_bar()
-            meta = NowPlaying(self.engine.style, self.engine.piece, self.engine.bar - 1)
+            meta = self._metadata()
+            if navigating:
+                self._selection = (meta.playlist_index, meta.piece)
             fade = min(int(CROSSFADE_SECONDS * self.engine.sr), len(audio))
             ramp = np.linspace(0, 1, fade, dtype=np.float32)[:, None]
             audio[:fade] *= ramp
@@ -155,6 +281,20 @@ class Player:
     def style(self) -> Style:
         """The style being rendered, which may not be audible yet: the base for the next mood."""
         return self.engine.style
+
+    def playback_state(self) -> dict:
+        """One snapshot of the audible and render-side metadata for a daemon response."""
+        with self._render_lock:
+            with self._lock:
+                now = self.now
+            return {
+                "now": {"style": now.style.to_dict(), "piece": now.piece, "bar": now.bar,
+                        "playlist_name": now.playlist_name, "playlist_index": now.playlist_index},
+                "style": self.style.to_dict(),
+                "playlist_name": self.playlist_name,
+                "playlist_index": self.playlist_index,
+                "continuous": self.continuous,
+            }
 
     def detach(self) -> None:
         """Leave the music playing without this app; an in-process player cannot outlive it, so it closes."""
@@ -193,7 +333,7 @@ class Player:
             if self._buffered < self._prebuffer:
                 with self._render_lock:
                     audio = self.engine.render_bar()
-                    meta = NowPlaying(self.engine.style, self.engine.piece, self.engine.bar - 1)
+                    meta = self._metadata()
                     with self._lock:
                         self._chunks.append(_Chunk(audio, meta))
                         self._buffered += len(audio)
@@ -221,7 +361,14 @@ class Player:
         self.position += frames
         return out
 
-    def _callback(self, outdata, frames, time_info, status) -> None:
+    def _callback(self, outdata, frames, time_info, status, *, ticket=None) -> None:
+        with self._callback_lock:
+            if ticket is not None and ticket is not self._stream_ticket:
+                outdata[:] = 0
+                return
+            self._render_callback(outdata, frames)
+
+    def _render_callback(self, outdata, frames) -> None:
         target = self.volume if self.playing else 0.0
         if self._gain == 0.0 and target == 0.0 and not self.playing:
             outdata[:] = 0
