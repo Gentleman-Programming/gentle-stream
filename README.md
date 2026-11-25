@@ -111,6 +111,9 @@ uv run gentle-stream
 
 It starts playing right away. Press `/`, describe a mood, press `Enter`.
 
+See the [player interfaces guide](docs/player-interfaces.md) for a terminal quick start,
+Windows desktop preview requirements, and what the packaged icons do (and do not do).
+
 ```bash
 gentle-stream --mood "rainy night in a small café"        # interpret a mood on start
 gentle-stream --model claude-bridge/claude-haiku-5-5      # choose the model up front
