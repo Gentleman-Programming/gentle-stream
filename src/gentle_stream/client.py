@@ -1,7 +1,8 @@
 """Talk to the background player (`daemon.py`): attach to it, start it when needed, and control it.
 
 `PlayerClient` has the interface the TUI uses from an in-process `Player` (now, playing, volume, level, style,
-spectrum, play/pause/toggle/next, set_style, set_volume, start, close), so the app does not know which one it has.
+spectrum, play/pause/toggle/next/previous, set_playlist, set_continuous, panic, set_style, set_volume, start,
+close), so the app does not know which one it has.
 `close()` stops the music (the `q` key), `detach()` only hangs up (the `b` key).
 
 State is cached: `spectrum()` polls it (the TUI calls it on every frame) and every control refreshes it, so `now`,
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from multiprocessing.connection import AuthenticationError, Client
 
 import numpy as np
@@ -116,7 +118,7 @@ def _spawn(deadline: float) -> None:
 class PlayerClient:
     def __init__(self, conn):
         self._conn = conn
-        self._lock = threading.Lock()   # the UI thread polls while a worker may send a style
+        self._lock = threading.RLock()   # keep exchanges and their cache updates in the same order
         self._shown = np.zeros(0)
         self._update(self.request("state"))
 
@@ -146,14 +148,21 @@ class PlayerClient:
         self.pid = state["pid"]
         self.playing, self.volume, self.level = state["playing"], state["volume"], state["level"]
         self.backend = state["backend"]
-        self.now = NowPlaying(Style.from_dict(now["style"]), now["piece"], now["bar"])
+        self._playlist_supported = "playlist_index" in state
+        self.playlist_name = state.get("playlist_name")
+        self.playlist_index = state.get("playlist_index")
+        self.continuous = state.get("continuous", False)
+        self.transport_parity_supported = state.get("transport_parity_supported", False)
+        self.now = NowPlaying(Style.from_dict(now["style"]), now["piece"], now["bar"],
+                              now.get("playlist_name"), now.get("playlist_index"))
         self.style = Style.from_dict(state["style"])   # rendered, maybe not audible yet: the base for a mood
 
     def _control(self, cmd: str, **args) -> None:
-        try:
-            self._update(self.request(cmd, **args))
-        except PlayerGone:
-            pass   # the next poll notices and the TUI leaves
+        with self._lock:
+            try:
+                self._update(self.request(cmd, **args))
+            except PlayerGone:
+                pass   # the next poll notices and the TUI leaves
 
     # ------------------------------------------------------------ Player interface
     @property
@@ -164,10 +173,11 @@ class PlayerClient:
         """Already playing: the player opened the audio before we could attach."""
 
     def spectrum(self, bands: int = 32) -> np.ndarray:
-        state = self.request("state", bands=bands)
-        self._update(state)
-        self._shown = settle(np.asarray(state["spectrum"], dtype=float), self._shown)
-        return self._shown
+        with self._lock:
+            state = self.request("state", bands=bands)
+            self._update(state)
+            self._shown = settle(np.asarray(state["spectrum"], dtype=float), self._shown)
+            return self._shown
 
     def play(self) -> None:
         self._control("play")
@@ -180,6 +190,34 @@ class PlayerClient:
 
     def next(self) -> None:
         self._control("next")
+
+    def previous(self) -> None:
+        """Leave old daemons alone; otherwise let the daemon decide whether a playlist is active."""
+        if self._playlist_supported:
+            self._control("previous")
+
+    def set_playlist(self, styles: Sequence[Style], start_index: int = 0, name: str = "",
+                     continuous: bool = False) -> None:
+        """Send an ordered snapshot; only the daemon configures the playlist."""
+        if not isinstance(styles, Sequence) or isinstance(styles, (str, bytes)):
+            raise ValueError("playlist must contain at least one Style")
+        songs = tuple(styles)
+        if any(not isinstance(style, Style) for style in songs):
+            raise ValueError("playlist entries must be validated Styles")
+        self._control("set_playlist", styles=[style.to_dict() for style in songs],
+                      start_index=start_index, name=name, continuous=continuous)
+
+    def set_continuous(self, enabled: bool) -> None:
+        with self._lock:
+            if not self.transport_parity_supported:
+                raise PlayerError("Repeat is not supported by this daemon")
+            self._update(self.request("set_continuous", enabled=enabled))
+
+    def panic(self) -> None:
+        with self._lock:
+            if not self.transport_parity_supported:
+                raise PlayerError("Panic restart is not supported by this daemon")
+            self._update(self.request("panic"))
 
     def set_volume(self, volume: float) -> None:
         self._control("set_volume", volume=float(volume))
