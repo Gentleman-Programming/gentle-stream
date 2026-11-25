@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Endless generative music in your terminal, steered by how you feel.">
+  <title>The Listening Room — gentle-stream</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="install.js" defer></script>
+</head>
+<body>
+  <header class="container masthead">
+    <span class="wordmark"><span aria-hidden="true">◉</span> gentle-stream</span>
+    <nav class="page-nav" aria-label="On this page">
+      <a href="#player">See the player</a>
+      <a href="#install">Install</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="container listening-room" aria-labelledby="page-title">
+      <div>
+        <p class="room-label">The Listening Room</p>
+        <h1 id="page-title">Music for the way <em>you feel.</em></h1>
+        <p class="lead">Endless generative music in your terminal. Describe a scene, a feeling or a place. gentle-stream composes what comes next, bar by bar.</p>
+        <div class="hero-actions">
+          <a class="primary-link" href="#player">See the player <span aria-hidden="true">↘</span></a>
+          <a href="#install">Install</a>
+        </div>
+      </div>
+      <figure class="terminal-preview" id="player" tabindex="-1">
+        <img src="../docs/assets/tui.svg" width="1385" height="782" alt="The gentle-stream terminal player playing Café Rain, with a rose-colored spectrum, playback status, and a field for describing your mood.">
+        <figcaption>Fig. 01 / The gentle-stream terminal player</figcaption>
+      </figure>
+    </section>
+
+    <ol class="container listening-notes" role="list" aria-label="How it works">
+      <li>
+        <h2><span aria-hidden="true">01 / </span>Start with a mood</h2>
+        <p>Gentle Shell interprets your words with the model you choose.</p>
+      </li>
+      <li>
+        <h2><span aria-hidden="true">02 / </span>Hear it take shape</h2>
+        <p>gentle-stream composes and plays each bar. A new mood starts on the next one.</p>
+      </li>
+      <li>
+        <h2><span aria-hidden="true">03 / </span>Keep what you like</h2>
+        <p>Save a mood’s musical settings and bring that sound back with no model call.</p>
+      </li>
+    </ol>
+
+    <section class="install-band" id="install" aria-labelledby="install-title" tabindex="-1">
+      <div class="container install-layout">
+        <div>
+          <h2 id="install-title">Open your terminal.</h2>
+          <p>On macOS or Linux, you’ll need <code>uv</code> (which manages Python 3.13), Gentle Shell (<code>gentle-shell</code> on your <code>PATH</code>) with at least one signed-in model provider, and an audio output device. On Linux, install your distro’s PortAudio package, such as <code>libportaudio2</code>.</p>
+          <p>FluidSynth is optional and only needed for sampled instruments.</p>
+        </div>
+        <div class="install-example">
+          <pre><code id="install-commands">uv tool install 'gentle-stream[samples] @ git+https://github.com/Gentleman-Programming/gentle-stream'
+gentle-stream</code></pre>
+          <div class="copy-tools">
+            <button type="button" id="copy-commands" hidden>Copy commands</button>
+            <p id="copy-status" role="status"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
