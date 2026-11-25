@@ -3,6 +3,8 @@
 
 <div align="center">
 
+<img src="docs/assets/rose-wave-logo.png" width="112" height="112" alt="gentle-stream logo: a pink rose above audio spectrum bars" />
+
 <h1>gentle-stream</h1>
 
 <p><strong>Endless generative music in your terminal, steered by how you feel.</strong></p>
@@ -15,6 +17,10 @@
 </p>
 
 <p>
+<a href="#get-started"><strong>Get started</strong></a> &bull;
+<a href="#demo"><strong>Demo</strong></a> &bull;
+<a href="#terminal-preview"><strong>Terminal screenshot</strong></a> &bull;
+<a href="docs/player-interfaces.md#native-windows-desktop-preview"><strong>Windows desktop preview</strong></a> &bull;
 <a href="https://gentlemanprogramming.com/"><strong>Website</strong></a> &bull;
 <a href="https://www.youtube.com/@GentlemanProgramming"><strong>YouTube</strong></a> &bull;
 <a href="https://github.com/Gentleman-Programming/gentle-stream"><strong>GitHub</strong></a>
@@ -29,11 +35,20 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 <strong>It never ends, it never repeats exactly, and every note is newly composed.</strong>
 </p>
 
+<a id="terminal-preview"></a>
 <img width="100%" src="docs/assets/tui.svg" alt="The gentle-stream TUI playing a lo-fi piece called Café Rain for the mood 'rainy night in a small café': title, key, tempo and progression, a rose-coloured spectrum, playback state, the chosen model with the session's token usage, the mood input and the key bindings in the footer." />
 
 </div>
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
+## Demo
+
+https://github.com/user-attachments/assets/60bed6fc-0c97-419e-8bc3-278c5a9967f0
+
+*2:35 · Spanish captions · Instrumental music · No voiceover.*
+
+If GitHub cannot load the video, see the [terminal screenshot](#terminal-preview).
 
 ## Features
 
@@ -110,6 +125,9 @@ uv run gentle-stream
 ```
 
 It starts playing right away. Press `/`, describe a mood, press `Enter`.
+
+See the [player interfaces guide](docs/player-interfaces.md) for a terminal quick start,
+Windows desktop preview requirements, and what the packaged icons do (and do not do).
 
 ```bash
 gentle-stream --mood "rainy night in a small café"        # interpret a mood on start
