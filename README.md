@@ -154,18 +154,29 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 
 ## Controls
 
+The terminal bar puts **Playlist** on the left, **Play/Pause** and **Next** in the center, and volume on the right. The mood field stays visible above the outlined controls. Press `Tab` to move focus; the focused button is highlighted in pink. Use `Ctrl+P` (or click `?` in the header) to open the command palette for actions such as **Save current prompt**, **Choose model**, and **Back**. Select **Keys** in the palette to see the shortcuts in the app.
+
 | Key | Action |
 | :--- | :--- |
 | `space` | Play / pause (smooth fade, no clicks) |
 | `n` | Next piece with the same mood: new key, progression, melody and groove |
 | `/` | Describe a mood; `Enter` sends it, `Esc` leaves the input |
 | `m` | Choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
+| `F2` | Open Appearance Settings; also available in the command palette or at the right of the toolbar when it fits |
 | `s` | Save what is playing under a name; `Enter` saves (an existing name is replaced), `Esc` cancels |
 | `p` | Saved prompts: `Enter` applies one instantly, `d` or `Delete` removes it, `Esc` closes |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
 | `b` | Back: leave the app and keep the music playing in the background |
 | `q` | Quit and stop the music (a running `gentle-shell` call is cancelled) |
+
+### Appearance Settings
+
+At 96 columns or wider, **Settings** appears to the right of volume without moving the centered transport. At narrower widths, use `F2` or `Ctrl+P` → **Appearance Settings**.
+
+Use the arrow keys and `Enter` to choose **Bars** (the default), **Filled Wave**, or **Mirrored**. The preview uses a fixed sample and does not change playback or the live spectrum. **Defaults** resets the draft to Bars. **Save and Close** applies the style and remembers it for next time. **Close** or `Esc` closes an unchanged draft; if you made changes, choose **Keep Editing** or **Discard Changes**.
+
+The style is stored in `appearance.json` next to `presets.json`. If the appearance file is invalid, the app uses Bars and leaves the file untouched until you fix or move it.
 
 ### Flags
 

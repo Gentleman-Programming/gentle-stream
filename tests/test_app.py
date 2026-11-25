@@ -1,6 +1,9 @@
 import threading
+from html import unescape
 
 import pytest
+
+from textual.widgets import Button, Footer
 
 from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
 from gentle_stream.bridge import InterpretError, Usage
@@ -162,7 +165,7 @@ async def test_plus_and_minus_change_the_volume_in_steps_of_5():
         await pilot.press("minus")
         assert player.volume == pytest.approx(0.75)
         await pilot.pause(0.1)
-        assert "vol 75%" in text(app, "#state")
+        assert text(app, "#volume") == "75%"
         await pilot.press("plus", "plus")
         assert player.volume == pytest.approx(0.85)
 
@@ -174,7 +177,7 @@ async def test_up_and_down_change_the_volume_in_steps_of_1():
         await pilot.press("down")
         assert player.volume == pytest.approx(0.79)
         await pilot.pause(0.1)
-        assert "vol 79%" in text(app, "#state")
+        assert text(app, "#volume") == "79%"
         await pilot.press("up", "up")
         assert player.volume == pytest.approx(0.81)
 
@@ -514,13 +517,107 @@ async def test_b_with_an_in_process_player_closes_it():
 
 
 @pytest.mark.asyncio
-async def test_the_footer_shows_back_and_quit():
+async def test_command_palette_reaches_actions_without_the_shortcut_strip():
+    app, _ = make_app(FakeShell())
+    async with app.run_test(size=(139, 40)) as pilot:
+        await pilot.click("HeaderIcon")
+        await pilot.press(*"save current")
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        assert isinstance(app.screen, SaveDialog)
+        await pilot.press("escape", "ctrl+p")
+        await pilot.press(*"choose model")
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        assert isinstance(app.screen, ModelPicker)
+        await pilot.press("escape", "ctrl+p")
+        await pilot.press(*"keys")
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        assert app.query("HelpPanel")
+        rendered = unescape(app.export_screenshot()).replace("\xa0", " ")
+        for description in ("Play/Pause", "Vol +1", "Vol -1", "Back (keeps playing)", "Quit the app"):
+            assert description in rendered
+
+
+@pytest.mark.asyncio
+async def test_transport_buttons_use_the_existing_player_and_playlist_actions(store):
+    store.save("Rain", RAIN)
+    app, player = make_app(FakeShell(), presets=store)
+    async with app.run_test() as pilot:
+        assert str(app.query_one("#play-pause", Button).label) == "Pause"
+        await pilot.click("#play-pause")
+        assert not player.playing
+        assert str(app.query_one("#play-pause", Button).label) == "Play"
+        await pilot.press("space")
+        assert player.playing
+        await pilot.click("#next")
+        assert text(app, "#status") == "Next piece, same mood."
+        assert player.engine.piece >= 2 or player.engine._pending_next
+        await pilot.click("#volume-down")
+        assert player.volume == pytest.approx(0.75)
+        assert text(app, "#volume") == "75%"
+        await pilot.click("#volume-up")
+        assert player.volume == pytest.approx(0.8)
+        assert text(app, "#volume") == "80%"
+        await pilot.click("#playlist")
+        assert isinstance(app.screen, PresetPicker)
+        await pilot.press("enter")
+        assert text(app, "#status") == "Up next: Rain (saved)"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(72, 24), (80, 24), (139, 40), (180, 50)])
+async def test_controls_are_in_one_stable_bar_below_the_visible_mood_input(size):
+    app, _ = make_app(FakeShell())
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        assert not app.query(Footer)
+        bar = app.query_one("#controls").region
+        mood = app.query_one("#mood")
+        assert mood.region.bottom <= bar.y and mood.region.height == 3
+        assert bar.bottom <= size[1]
+        assert app.query_one("#spectrum").region.height >= 5
+        buttons = [button for button in app.query("#controls Button") if button.display]
+        expected = ["playlist", "play-pause", "next", "volume-down", "volume-up"]
+        assert [b.id for b in buttons] == expected + (["settings"] if size[0] >= 96 else [])
+        left, play, next_piece, down, readout, up = [
+            app.query_one(f"#{name}").region
+            for name in ("playlist", "play-pause", "next", "volume-down", "volume", "volume-up")
+        ]
+        assert bar.height == 3
+        assert all(b.region.y == play.y and b.region.height == 3 for b in buttons)
+        assert play.size == next_piece.size == down.size == up.size
+        assert all(b.content_size.width >= len(str(b.label)) and b.content_size.height == 1 for b in buttons)
+        assert bar.x <= left.x and left.right + 2 <= play.x and play.right + 2 <= next_piece.x
+        assert next_piece.right + 2 <= down.x and up.right <= bar.right
+        assert down.right + 2 <= readout.x and readout.right + 2 <= up.x
+        assert readout.y == play.y + 1 and readout.width >= len("100%")
+        assert abs((play.x + next_piece.right) - (2 * bar.x + bar.width)) <= 2
+        frame = app.export_screenshot()
+        assert all(label in frame for label in ("Playlist", "Pause", "Next", "80%"))
+        await pilot.press("space", "slash")
+        assert mood.has_focus
+        assert app.query_one("#controls").region == bar
+        assert app.query_one("#play-pause").region == play
+
+
+@pytest.mark.asyncio
+async def test_control_outlines_and_keyboard_mouse_highlight():
     app, _ = make_app(FakeShell())
     async with app.run_test() as pilot:
-        await pilot.pause(0.1)
-        keys = {b.key: b.description for b in app.BINDINGS if b.show}
-        assert "b" in keys and "q" in keys
-        assert "keep" in keys["b"].lower() and "stop" in keys["q"].lower()
+        play = app.query_one("#play-pause", Button)
+        up = app.query_one("#volume-up", Button)
+        assert all(edge == ("round", play.styles.color) for edge in play.styles.border)
+        assert play.styles.color.hex.lower() == "#ff76c3"
+        assert all(edge[0] == "round" for edge in up.styles.border)
+        await pilot.press("tab", "tab", "tab")
+        assert play.has_focus
+        assert play.styles.background.hex.lower() == "#ff76c3"
+        assert play.styles.color.hex.lower() == "#140a12"
+        await pilot.hover("#volume-up")
+        assert up.styles.background == play.styles.background
+        assert up.styles.color == play.styles.color
 
 
 @pytest.mark.asyncio
