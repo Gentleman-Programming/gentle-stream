@@ -611,6 +611,9 @@ class StreamApp(App):
         yield from super().get_system_commands(screen)
         yield SystemCommand('Settings', 'Appearance, audio output and mood model (F2)', self.action_settings)
         yield SystemCommand('Panic restart', 'Hard cut and restart current track, no AI (F4)', self.action_panic)
+        yield SystemCommand('Choose model', 'Choose the model Gentle Shell uses for moods (m)', self.action_pick_model)
+        yield SystemCommand('Save current prompt', 'Save the audible song to Saved prompts or a playlist (s)',
+                            self.action_save_preset)
 
     # ------------------------------------------------------------ actions
     def action_back(self) -> None:

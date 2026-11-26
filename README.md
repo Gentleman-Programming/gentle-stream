@@ -17,6 +17,10 @@
 </p>
 
 <p>
+<a href="#get-started"><strong>Get started</strong></a> &bull;
+<a href="#demo"><strong>Demo</strong></a> &bull;
+<a href="#terminal-preview"><strong>Terminal screenshot</strong></a> &bull;
+<a href="docs/player-interfaces.md"><strong>Player interfaces</strong></a> &bull;
 <a href="https://gentlemanprogramming.com/"><strong>Website</strong></a> &bull;
 <a href="https://www.youtube.com/@GentlemanProgramming"><strong>YouTube</strong></a> &bull;
 <a href="https://github.com/Gentleman-Programming/gentle-stream"><strong>GitHub</strong></a>
@@ -31,6 +35,7 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 <strong>It never ends, it never repeats exactly, and every note is newly composed.</strong>
 </p>
 
+<a id="terminal-preview"></a>
 <img width="100%" src="docs/assets/tui.svg" alt="The gentle-stream TUI playing a lo-fi piece called Café Rain for the mood 'rainy night in a small café': title, key, tempo and progression, a rose-coloured spectrum, playback state, the chosen model with the session's token usage, the mood input and the key bindings in the footer." />
 
 
@@ -43,6 +48,8 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 https://github.com/user-attachments/assets/60bed6fc-0c97-419e-8bc3-278c5a9967f0
 
 *2:35 · Spanish captions · Instrumental music · No voiceover.*
+
+If GitHub cannot load the video, see the [terminal screenshot](#terminal-preview).
 
 ## Features
 
@@ -181,7 +188,8 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 **F2** or **Settings** on the command strip opens [Appearance settings](docs/appearance.md):
 live spectrum styles, colors, layout and visibility, plus audio output and mood model selection. **Preview** is
 temporary; **Save & close** keeps the changes. F2 always works, even when the controls and footer
-are hidden. Click **Command palette** in the header (or press **Ctrl+P**) to find Settings.
+are hidden. Click **Command palette** in the header (or press **Ctrl+P**) for **Settings**,
+**Panic restart**, **Choose model**, and **Save current prompt**.
 **Compact** reduces spacing around the spectrum and input to give the graph more room, even on
 short terminals.
 
@@ -420,6 +428,17 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 <div align="right"><a href="#top">Back to top</a></div>
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
+## Launcher artwork
+
+The Python wheel includes `gentle_stream/assets/launcher-icon.png` (256 × 256 RGBA)
+and `gentle_stream/assets/launcher-icon.ico` (16, 32, 48, 64, 128 and 256 px RGBA PNG frames).
+Integrations can read either with `importlib.resources.files("gentle_stream").joinpath("assets", name)`.
+
+These wheel resources do not change the icon of the `gentle-stream` console entry point or host
+terminal, create shortcuts, or install a desktop launcher. The separate Omarchy installer uses
+its own rose-wave logo. See [Launcher artwork details](docs/launcher-artwork.md) for provenance
+and the ICO regeneration recipe.
 
 ## Project layout
 

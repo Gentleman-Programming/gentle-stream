@@ -316,6 +316,58 @@ async def test_named_header_palette_opens_settings_even_with_hidden_chrome(ui):
         assert not app.preference_store.path.exists() and not store.path.exists() and not library.path.exists()
 
 
+async def select_palette_command(pilot, app, label):
+    await pilot.press("ctrl+p")
+    assert isinstance(app.screen, CommandPalette)
+    await pilot.press(*(key if key != " " else "space" for key in label.lower()))
+    await pilot.pause(.35)
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_palette_choose_model(ui):
+    app, player, shell, store, library = ui
+    async with app.run_test(size=(80, 24)) as pilot:
+        await select_palette_command(pilot, app, "Choose model")
+        assert isinstance(app.screen, ModelPicker)
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        assert shown(app, "#model") == "model: provider/chosen-model"
+        shell.list_models.assert_called_once_with()
+        shell.interpret_with_usage.assert_not_called()
+        player.set_style.assert_not_called()
+        assert not store.path.exists() and not library.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_palette_save_current_prompt(ui):
+    app, player, shell, store, library = ui
+    async with app.run_test(size=(80, 24)) as pilot:
+        await select_palette_command(pilot, app, "Save current prompt")
+        assert isinstance(app.screen, SaveDialog)
+        assert app.screen.query_one("#save-name", Input).value == player.now.style.name
+        await pilot.press("escape")
+        assert not store.path.exists() and not library.path.exists()
+        await select_palette_command(pilot, app, "Save current prompt")
+        await pilot.press("enter")
+        assert shown(app, "#status") == f"Saved “{player.now.style.name}”"
+        assert not library.path.exists()
+        player.set_style.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_palette_still_offers_panic_restart(ui):
+    app, player, shell, store, library = ui
+    async with app.run_test(size=(80, 24)) as pilot:
+        await select_palette_command(pilot, app, "Panic restart")
+        player.panic.assert_called_once_with()
+        assert shown(app, "#status") == "Current track restarted from the beginning · same settings · no AI call."
+        shell.interpret_with_usage.assert_not_called()
+        assert not store.path.exists() and not library.path.exists()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (80, 24)])
 async def test_main_screen_renders_one_playlist_and_no_strip_bindings_in_footer(ui, size):
