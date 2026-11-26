@@ -1,0 +1,348 @@
+:root {
+  color-scheme: dark;
+  --plum: #1a1218;
+  --cream: #fff1ec;
+  --rose: #f095c8;
+  --muted-rose: #d7a0b8;
+  --soft-text: #edd9e3;
+  --rule: #634254;
+  --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--plum);
+  color: var(--cream);
+  font: 1rem/1.6 system-ui, sans-serif;
+}
+
+.container {
+  width: min(82rem, 100% - clamp(2rem, 9vw, 9rem));
+  margin-inline: auto;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 0.25em;
+}
+
+a:hover {
+  text-decoration-thickness: 0.14em;
+}
+
+:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 4px;
+}
+
+.masthead,
+.page-nav,
+.hero-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.4rem;
+}
+
+.masthead {
+  justify-content: space-between;
+  min-height: 5.25rem;
+  padding-block: 0.5rem;
+  border-block-end: 1px solid var(--rule);
+}
+
+.wordmark {
+  font: 700 1rem var(--mono);
+  letter-spacing: -0.04em;
+}
+
+.wordmark span {
+  color: var(--rose);
+}
+
+.page-nav a,
+.hero-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.listening-room {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 5.25rem);
+  padding-block: clamp(2.75rem, 7.3vw, 7.25rem) clamp(2.5rem, 6vw, 5.5rem);
+}
+
+.room-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  color: var(--muted-rose);
+  font: 700 0.77rem/1.5 var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.room-label::before {
+  content: '';
+  width: 1.7rem;
+  border-block-start: 1px solid currentColor;
+}
+
+h1,
+.install-band h2 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.055em;
+}
+
+h1 {
+  font-size: clamp(3.4rem, 6.3vw, 6.85rem);
+  line-height: 0.94;
+  text-wrap: balance;
+}
+
+h1 em {
+  color: var(--rose);
+}
+
+.lead {
+  max-width: 37ch;
+  margin-block: 1.6rem;
+  color: var(--soft-text);
+  font-size: 1.08rem;
+}
+
+.hero-actions {
+  font-weight: 700;
+}
+
+.primary-link {
+  gap: 0.35em;
+  padding: 0.55rem 1.05rem;
+  background: var(--rose);
+  color: var(--plum);
+  text-decoration: none;
+}
+
+.primary-link:hover {
+  background: #ffc3e4;
+}
+
+.primary-link:focus-visible {
+  outline-color: var(--rose);
+}
+
+.terminal-preview {
+  min-width: 0;
+  margin: 0;
+  scroll-margin-block-start: 1rem;
+}
+
+.terminal-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #835874;
+  border-radius: 10px;
+  background: #221620;
+  box-shadow: 0 2rem 5rem #100a0f, 0 0 5rem #7c315640;
+}
+
+.terminal-preview figcaption {
+  position: relative;
+  margin-block-start: 0.95rem;
+  color: #e5bbd1;
+  font: 0.77rem/1.5 var(--mono);
+  letter-spacing: 0.05em;
+}
+
+.listening-notes {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem 2rem;
+  margin-block: 0 clamp(2.25rem, 6vw, 5.5rem);
+  border-block: 1px solid var(--rule);
+  padding: 1.4rem 0 1.8rem;
+  color: var(--soft-text);
+  list-style: none;
+}
+
+.listening-notes h2 {
+  margin: 0 0 0.2rem;
+  color: var(--rose);
+  font-size: 1rem;
+}
+
+.listening-notes p {
+  margin: 0;
+}
+
+.demo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+  align-items: center;
+  gap: 1rem 2.5rem;
+  margin-block-end: clamp(2.25rem, 6vw, 5.5rem);
+  scroll-margin-block-start: 1rem;
+}
+
+.demo h2 {
+  margin: 0;
+  font: 400 clamp(2.2rem, 4.5vw, 4.4rem)/1.05 Georgia, serif;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.demo .demo-copy {
+  max-width: 37ch;
+  margin: 0.8rem 0 0;
+  color: var(--soft-text);
+}
+
+.demo .demo-preview {
+  margin: 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 1.2rem;
+  background: #221620;
+}
+
+.demo .demo-stages {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 2rem;
+  margin: 0;
+}
+
+.demo dt {
+  margin-block-end: 0.2rem;
+  color: var(--muted-rose);
+  font: 700 0.77rem/1.5 var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.demo dd {
+  margin: 0;
+  color: var(--soft-text);
+}
+
+.demo dd strong {
+  display: block;
+  color: var(--rose);
+}
+
+.demo figcaption {
+  margin-block-start: 1rem;
+  border-block-start: 1px solid var(--rule);
+  padding-block-start: 0.75rem;
+  color: var(--soft-text);
+}
+
+.demo figcaption p {
+  margin: 0;
+  font: 0.77rem/1.5 var(--mono);
+}
+
+.demo figcaption a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--cream);
+}
+
+@media (max-width: 57rem) {
+  .demo,
+  .demo .demo-stages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.install-band {
+  outline-offset: -4px;
+}
+
+.install-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+  align-items: center;
+  gap: 1rem 2.5rem;
+  border-block-start: 1px solid var(--rule);
+  padding-block: clamp(2rem, 6vw, 5rem);
+}
+
+.install-band h2 {
+  font-size: clamp(2.2rem, 4.5vw, 4.4rem);
+  line-height: 1.05;
+}
+
+.install-band p {
+  margin: 0.8rem 0 0;
+}
+
+.install-example pre {
+  margin: 0;
+  padding: 1.2rem;
+  background: #2c1c29;
+  color: var(--cream);
+  font: 0.92rem/1.65 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+code {
+  font-family: var(--mono);
+}
+
+.copy-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+}
+
+.copy-tools button {
+  min-height: 44px;
+  margin-block-start: 0.75rem;
+  border: 1px solid var(--muted-rose);
+  padding: 0.45rem 0.8rem;
+  background: transparent;
+  color: inherit;
+  font: 700 0.85rem var(--mono);
+  cursor: pointer;
+}
+
+.copy-tools button:hover {
+  background: #2c1c29;
+}
+
+.copy-tools [role='status'] {
+  font-size: 0.9rem;
+}
+
+.copy-tools [role='status']:empty {
+  margin: 0;
+}
+
+@media (max-width: 57rem) {
+  .listening-room,
+  .listening-notes,
+  .install-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  h1 {
+    max-width: 14ch;
+    text-wrap: wrap;
+  }
+}
