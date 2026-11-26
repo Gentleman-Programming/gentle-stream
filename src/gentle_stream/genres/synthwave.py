@@ -51,8 +51,9 @@ class Instruments:
     """Procedural synthwave voices. Notes are cached per piece (no randomness in the tonal voices); the drums are a
     few noise variants drawn once from the piece's generator."""
 
-    def __init__(self, rng: np.random.Generator, sr: int = SR):
+    def __init__(self, rng: np.random.Generator, sr: int = SR, *, saw_lead_cut: int = 4000):
         self.rng, self.sr = rng, sr
+        self._saw_lead_cut = saw_lead_cut
         self._cache: dict[tuple, np.ndarray] = {}
         self._kick = self._make_kick()
         self._snares = [self._make_snare() for _ in range(2)]   # (dry hit, gated tail)
@@ -127,7 +128,8 @@ class Instruments:
         elif color == "pad":
             s, cut = 0.6 * osc("triangle", f, n, self.sr) + 0.4 * osc("saw", f, n, self.sr), 2500
         else:
-            s, cut = osc("saw", f, n, self.sr), 5000
+            # Roll off the upper harmonics without changing the saw, envelope or gain.
+            s, cut = osc("saw", f, n, self.sr), self._saw_lead_cut
         att = 0.06 if color == "pad" else 0.008
         return lp(s, cut, self.sr) * adsr(n, self.sr, att, 0.2, 0.8, 0.15, hold=dur) * 0.5
 
@@ -209,7 +211,8 @@ def _rms(x: np.ndarray, sr: int) -> float:
 def _targets(sr: int) -> dict[str, float]:
     """RMS of the procedural voices' reference notes (middle C, 1 s, velocity 0.8): the sampled programs are scaled
     to it, so both backends sit in the same mix."""
-    p = Instruments(np.random.default_rng(0), sr)
+    # Keep the sampled saw lead calibrated to its original procedural reference.
+    p = Instruments(np.random.default_rng(0), sr, saw_lead_cut=5000)
     out = {"pad": _rms(p.pad(60, 1.0, 0.8, 0.5), sr), "arp": _rms(p.arp(60, 1.0, 0.8), sr),
            "bass": _rms(p.bass(60, 1.0, 0.8), sr), "kick": _rms(p.kick(), sr), "hat": _rms(p.hat(), sr),
            "open": _rms(p.hat(True), sr), "crash": _rms(p.crash(), sr),

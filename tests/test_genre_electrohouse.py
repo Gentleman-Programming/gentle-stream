@@ -232,6 +232,18 @@ def test_sidechain_curve_is_continuous_in_absolute_time():
 
 
 # ---------------------------------------------------------------- voices
+def test_snare_snap_decays_before_the_next_fast_roll_hit():
+    ins = G.instruments(np.random.default_rng(0), SR, None)
+    snare = ins.snare()
+    # Second differences emphasize the noise snap over the 195 Hz body.
+    snap = np.diff(snare, n=2)
+    onset = np.sqrt(np.mean(snap[:int(0.02 * SR)] ** 2))
+    around_next_hit = np.sqrt(np.mean(snap[int(0.05 * SR):int(0.07 * SR)] ** 2))
+    assert len(snare) == int(0.22 * SR)
+    assert onset > 0.15
+    assert around_next_hit / onset < 0.18
+
+
 def test_supersaw_pad_stab_and_dirty_bass_sound_right():
     ins = G.instruments(np.random.default_rng(3), SR, None)
     pad = ins.pad(57, 2.0, 0.8, 3000, 3000)
@@ -260,6 +272,7 @@ def test_supersaw_pad_stab_and_dirty_bass_sound_right():
 
 def test_samples_backend_uses_the_electronic_kit_gm_synths_and_a_procedural_bass():
     calls = []
+    snare_hits = []
 
     class Fake:
         def play(self, p, m, dur, vel=1.0):
@@ -268,6 +281,8 @@ def test_samples_backend_uses_the_electronic_kit_gm_synths_and_a_procedural_bass
 
         def hit(self, h, g=1.0):
             calls.append(("hit", h.kit, h.key))
+            if h.key == 38:
+                snare_hits.append((h, g))
             return np.zeros(64)
 
     inst = G.instruments(np.random.default_rng(4), SR, Fake())
@@ -281,4 +296,8 @@ def test_samples_backend_uses_the_electronic_kit_gm_synths_and_a_procedural_bass
     assert {81, 90} <= programs                                # saw stabs/lead, polysynth pad
     assert not programs & set(range(32, 40))                   # no GM bass: the dirty bass stays procedural
     assert kits == {24}
+    assert snare_hits
+    for h, g in snare_hits:
+        assert (h.kit, h.key, h.velocity, h.seconds, g) == (24, 38, 105, 0.25, 1.0)
+        assert np.isclose(h.rms, 0.1239607833592308, rtol=0, atol=1e-10)
     assert np.any(piece._acc)                                  # the procedural bass and riser still sound
