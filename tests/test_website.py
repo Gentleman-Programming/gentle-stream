@@ -18,6 +18,7 @@ class LandingPage(HTMLParser):
     def __init__(self, source):
         super().__init__()
         self.elements = []
+        self.end_tags = []
         self.text = []
         self.in_code = False
         self.commands = []
@@ -30,6 +31,7 @@ class LandingPage(HTMLParser):
             self.in_code = True
 
     def handle_endtag(self, tag):
+        self.end_tags.append((tag, len(self.elements)))
         if tag == "code":
             self.in_code = False
 
@@ -61,9 +63,13 @@ class WebsiteTests(unittest.TestCase):
 
     def test_player_navigation_and_local_assets(self):
         page = self.page()
-        links = [attrs["href"] for tag, attrs in page.elements if tag == "a"]
-        self.assertIn("#player", links)
-        self.assertIn("#install", links)
+        links = [attrs for tag, attrs in page.elements if tag == "a"]
+        self.assertIn("#player", [attrs["href"] for attrs in links])
+        self.assertIn("#install", [attrs["href"] for attrs in links])
+        for link in links:
+            if link["href"].startswith("#"):
+                with self.subTest(link=link):
+                    self.assertIn(link.get("target"), (None, "_self"))
         self.assertTrue(page.attributes("player"))
         images = [attrs for tag, attrs in page.elements if tag == "img"]
         self.assertEqual([img.get("src") for img in images], ["../docs/assets/tui.svg"])
@@ -76,6 +82,43 @@ class WebsiteTests(unittest.TestCase):
                 self.assertEqual(urlsplit(asset).netloc, "")
                 self.assertEqual(urlsplit(asset).scheme, "")
                 self.assertTrue((PAGE.parent / asset).is_file())
+
+    def test_demo_can_be_found_and_opened_without_an_embed(self):
+        page = self.page()
+        nav_start = next(i for i, (tag, _) in enumerate(page.elements) if tag == "nav")
+        nav_end = next(i for tag, i in page.end_tags if tag == "nav" and i > nav_start)
+        self.assertEqual(
+            [attrs["href"] for tag, attrs in page.elements[nav_start:nav_end] if tag == "a"],
+            ["#player", "#demo", "#install"],
+        )
+
+        notes_end = next(i for tag, i in page.end_tags if tag == "ol")
+        demo_start = page.elements.index(("section", page.attributes("demo")))
+        install_start = page.elements.index(("section", page.attributes("install")))
+        demo_end = next(i for tag, i in page.end_tags if tag == "section" and i > demo_start)
+        self.assertLessEqual(notes_end, demo_start)
+        self.assertLessEqual(demo_end, install_start)
+        self.assertEqual(page.attributes("demo").get("tabindex"), "-1")
+        self.assertEqual(page.attributes("demo").get("aria-labelledby"), "demo-title")
+        demo = page.elements[demo_start:demo_end]
+        self.assertIn(("h2", page.attributes("demo-title")), demo)
+        self.assertEqual(
+            [attrs for tag, attrs in demo if tag == "a"],
+            [{
+                "href": "https://github.com/Gentleman-Programming/gentle-stream/tree/feat/cross-platform-integration#demo",
+                "target": "_blank",
+                "rel": "noopener",
+            }],
+        )
+        self.assertFalse({tag for tag, _ in page.elements} & {"iframe", "video", "audio", "embed", "object"})
+
+        visible_copy = " ".join(" ".join(page.text).split())
+        for phrase in (
+            "From mood to music.", "rainy night in a small café", "Café Rain",
+            "Lo-fi · F Dorian · 74 BPM", "2:35 · Spanish captions · Instrumental, no voiceover",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, visible_copy)
 
     @unittest.skipUnless(shutil.which("node"), "Node is only needed to exercise the browser script")
     def test_copy_reports_actual_clipboard_outcomes(self):

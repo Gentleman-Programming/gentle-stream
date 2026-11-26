@@ -187,11 +187,88 @@ h1 em {
   margin: 0;
 }
 
+.demo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+  align-items: center;
+  gap: 1rem 2.5rem;
+  margin-block-end: clamp(2.25rem, 6vw, 5.5rem);
+  scroll-margin-block-start: 1rem;
+}
+
+.demo h2 {
+  margin: 0;
+  font: 400 clamp(2.2rem, 4.5vw, 4.4rem)/1.05 Georgia, serif;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.demo .demo-copy {
+  max-width: 37ch;
+  margin: 0.8rem 0 0;
+  color: var(--soft-text);
+}
+
+.demo .demo-preview {
+  margin: 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 1.2rem;
+  background: #221620;
+}
+
+.demo .demo-stages {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 2rem;
+  margin: 0;
+}
+
+.demo dt {
+  margin-block-end: 0.2rem;
+  color: var(--muted-rose);
+  font: 700 0.77rem/1.5 var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.demo dd {
+  margin: 0;
+  color: var(--soft-text);
+}
+
+.demo dd strong {
+  display: block;
+  color: var(--rose);
+}
+
+.demo figcaption {
+  margin-block-start: 1rem;
+  border-block-start: 1px solid var(--rule);
+  padding-block-start: 0.75rem;
+  color: var(--soft-text);
+}
+
+.demo figcaption p {
+  margin: 0;
+  font: 0.77rem/1.5 var(--mono);
+}
+
+.demo figcaption a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--cream);
+}
+
+@media (max-width: 57rem) {
+  .demo,
+  .demo .demo-stages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .install-band {
-  color-scheme: light;
-  background: var(--cream);
-  color: var(--plum);
-  padding-block: clamp(2rem, 6vw, 5rem);
   outline-offset: -4px;
 }
 
@@ -200,6 +277,8 @@ h1 em {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
   align-items: center;
   gap: 1rem 2.5rem;
+  border-block-start: 1px solid var(--rule);
+  padding-block: clamp(2rem, 6vw, 5rem);
 }
 
 .install-band h2 {
@@ -235,7 +314,7 @@ code {
 .copy-tools button {
   min-height: 44px;
   margin-block-start: 0.75rem;
-  border: 1px solid var(--plum);
+  border: 1px solid var(--muted-rose);
   padding: 0.45rem 0.8rem;
   background: transparent;
   color: inherit;
@@ -244,7 +323,7 @@ code {
 }
 
 .copy-tools button:hover {
-  background: #f7d9e6;
+  background: #2c1c29;
 }
 
 .copy-tools [role='status'] {
