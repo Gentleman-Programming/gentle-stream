@@ -96,6 +96,11 @@ Only describing a mood calls a model. The status line shows what that call used,
 
 See [platform setup and audio verification](docs/platform-support.md) for the Linux, macOS, WSL2, and native Windows paths.
 
+On Omarchy, try the [standalone Linux desktop preview](docs/omarchy-desktop.md):
+`./scripts/install-omarchy-app.sh` from the preview checkout after installing the prerequisites.
+The preview embeds the TUI in its own GTK window and stops its own music on close;
+it does not attach to a CLI player. Native Omarchy GUI and audio are not yet verified.
+
 **Requirements**
 
 | You need | Why |
