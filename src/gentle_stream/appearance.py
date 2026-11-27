@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, replace
+from decimal import Decimal
 import json
+from math import isfinite
 import os
 from pathlib import Path
 import re
@@ -78,6 +80,34 @@ def _invalid_constant(value):
     raise ValueError(f'invalid JSON constant: {value}')
 
 
+class _LossyFloat(float):
+    """A JSON number whose value the standard float encoder cannot round-trip."""
+
+
+def _read_float(token: str) -> float:
+    value = float(token)
+    if value == 0:
+        # Zero is exact at any exponent; a nonzero significand here underflowed.
+        exact = not token.lower().partition('e')[0].strip('-0.')
+    else:
+        # Compare against the decimal the writer would emit, not the binary float.
+        exact = isfinite(value) and Decimal(token) == Decimal(repr(value))
+    return value if exact else _LossyFloat(value)
+
+
+def _check_extension_numbers(record: dict) -> None:
+    pending = [record]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, _LossyFloat):
+            raise PreferenceError('Cannot save appearance preferences without changing an extension number. '
+                                  'Fix or move appearance.json before saving.')
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+
+
 class PreferenceStore:
     def __init__(self, path: Path | str | None = None):
         base = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
@@ -88,7 +118,7 @@ class PreferenceStore:
         self.error = None
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'), object_pairs_hook=_unique_fields,
-                              parse_constant=_invalid_constant)
+                              parse_constant=_invalid_constant, parse_float=_read_float)
             if (not isinstance(data, dict) or set(data) != {'version', 'preferences'}
                     or type(data['version']) is not int or data['version'] != 1):
                 raise ValueError('unexpected format')
@@ -96,6 +126,10 @@ class PreferenceStore:
             known = {field.name for field in fields(Preferences)}
             if not isinstance(record, dict) or not known <= record.keys():
                 raise ValueError('unexpected preference fields')
+            # Known fields keep their v1 float validation and storage semantics.
+            for key in known:
+                if isinstance(record[key], _LossyFloat):
+                    record[key] = float(record[key])
             return Preferences(**{key: record[key] for key in known}).validate(), record
         except FileNotFoundError:
             defaults = Preferences()
@@ -131,6 +165,7 @@ class PreferenceStore:
         return merged
 
     def _write(self, record: dict) -> None:
+        _check_extension_numbers(record)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, name = tempfile.mkstemp(dir=self.path.parent, prefix='.appearance-', suffix='.tmp')

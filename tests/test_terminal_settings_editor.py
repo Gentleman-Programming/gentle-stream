@@ -170,7 +170,7 @@ async def test_save_merges_untouched_preferences_but_rejects_an_edited_field_con
     async with app.run_test(size=(72, 24)) as pilot:
         await pilot.press('f2')
         app.screen.query_one('#appearance-accent', Input).value = '#abcdef'
-        record = {**asdict(Preferences(bands=16)), 'extension': {'nested': [1, 2]}}
+        record = {**asdict(Preferences(bands=16)), 'extension': {'nested': [1, 0.1, 1e100]}}
         path.write_text(json.dumps({'version': 1, 'preferences': record}), encoding='utf-8')
         await pilot.pause()
         assert await pilot.click('#appearance-save')
@@ -193,3 +193,46 @@ async def test_save_merges_untouched_preferences_but_rejects_an_edited_field_con
         player.set_style.assert_not_called()
         player.set_device.assert_not_called()
         shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lossy_extension_save_keeps_draft_open_and_allows_retry(ui):
+    app, player, shell, legacy, library = ui
+    store = app.preference_store
+    original = Preferences(accent='#123456')
+    store.save(original)
+    app.preferences = original
+    record = {**asdict(original), 'extension': {'nested': ['NUMBER']}}
+    raw = json.dumps({'version': 1, 'preferences': record})
+    stored = raw.replace('"NUMBER"', '1e400').encode()
+    store.path.write_bytes(stored)
+    async with app.run_test(size=(80, 24)) as pilot:
+        root = app.screen
+        before = [call for call in player.mock_calls if call[0] != 'spectrum']
+        await pilot.press('f2')
+        settings = app.screen
+        accent = settings.query_one('#appearance-accent', Input)
+        assert accent.value == original.accent
+        accent.value = '#abcdef'
+        await pilot.pause()
+        preview = shown(app, '#appearance-preview')
+        assert await pilot.click('#appearance-save')
+        assert store.path.read_bytes() == stored, store.path.read_text(encoding='utf-8')
+        assert app.screen is settings and accent.value == '#abcdef'
+        assert app.preferences == original and app.current_theme.primary == original.accent
+        assert shown(app, '#appearance-preview') == preview
+        assert shown(app, '#appearance-status') == (
+            'Cannot save appearance preferences without changing an extension number. '
+            'Fix or move appearance.json before saving.')
+
+        store.path.write_bytes(raw.replace('"NUMBER"', '0.1').encode())
+        await pilot.pause(settings.query_one('#appearance-save', Button).active_effect_duration)
+        assert await pilot.click('#appearance-save')
+        assert app.screen is root
+        assert store.load() == app.preferences == replace(original, accent='#abcdef')
+        assert json.loads(store.path.read_text(encoding='utf-8')) == {
+            'version': 1, 'preferences': {**record, 'accent': '#abcdef', 'extension': {'nested': [0.1]}}}
+        assert [call for call in player.mock_calls if call[0] != 'spectrum'] == before
+        shell.list_models.assert_not_called()
+        shell.interpret_with_usage.assert_not_called()
+        assert not legacy.path.exists() and not library.path.exists()

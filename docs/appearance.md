@@ -83,8 +83,11 @@ spectrum interface to refresh audible metadata, without rendering the hidden gra
 No migration, credentials, model configuration or music parameters are stored here.
 The JSON envelope is `{"version": 1, "preferences": {...}}`; preferences contains all
 fields of `gentle_stream.appearance.Preferences`. Unknown preference fields are
-preserved; missing, incorrectly typed, out-of-range or malformed known fields
-reject the record as a whole. Saving merges changes with untouched values; if
+preserved. If saving would change the value of an extension number (for example,
+by rounding it or overflowing to infinity), the file stays untouched and Settings
+keeps the draft open. Fix or move `appearance.json` before retrying. Missing,
+incorrectly typed, out-of-range or malformed known fields reject the record as a
+whole. Saving merges changes with untouched values; if
 an edited setting changed elsewhere, reopen Settings before trying again. Missing files use
 defaults without creating a file. Unreadable/corrupt records use defaults and display
 `Cannot read appearance preferences: …` in Settings, and are never overwritten.

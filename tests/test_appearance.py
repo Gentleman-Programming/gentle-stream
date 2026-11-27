@@ -1,5 +1,6 @@
 """Validated UI-only preferences and native settings flows."""
-from dataclasses import replace
+import json
+from dataclasses import asdict, replace
 
 import pytest
 from textual.containers import VerticalScroll
@@ -51,6 +52,46 @@ def test_invalid_record_is_not_rewritten(tmp_path, record):
     with pytest.raises(PreferenceError):
         store.save(Preferences())
     assert store.path.read_text() == record
+
+
+@pytest.mark.parametrize('number', ['1e400', '0.12345678901234567890123456789'])
+@pytest.mark.parametrize('method', ['save', 'save_changes'])
+def test_save_rejects_lossy_nested_extension_numbers(tmp_path, number, method):
+    store = PreferenceStore(tmp_path / 'appearance.json')
+    current = Preferences(accent='#123456', smoothing=0.1)
+    draft = replace(current, bands=16)
+    record = {**asdict(current), 'extension': {'nested': ['NUMBER']}}
+    before = json.dumps({'version': 1, 'preferences': record}).replace('"NUMBER"', number).encode()
+    store.path.write_bytes(before)
+    assert store.load() == current and store.error is None
+    assert store.save_changes(current, current) == current
+    assert store.path.read_bytes() == before
+
+    error = None
+    try:
+        if method == 'save':
+            store.save(draft)
+        else:
+            store.save_changes(current, draft)
+    except PreferenceError as caught:
+        error = str(caught)
+    assert store.path.read_bytes() == before, store.path.read_text(encoding='utf-8')
+    assert sorted(path.name for path in tmp_path.iterdir()) == ['appearance.json']
+    assert error == ('Cannot save appearance preferences without changing an extension number. '
+                     'Fix or move appearance.json before saving.')
+    assert store.load() == current and store.error is None
+
+
+def test_save_preserves_round_trippable_extension_numbers(tmp_path):
+    store = PreferenceStore(tmp_path / 'appearance.json')
+    extension = {'nested': [0.1, 1e100, 10 ** 400, '1e400', True, None]}
+    record = {**asdict(Preferences()), 'extension': extension}
+    store.path.write_text(json.dumps({'version': 1, 'preferences': record}), encoding='utf-8')
+    draft = Preferences(bands=16)
+    store.save(draft)
+    assert store.load() == draft and store.error is None
+    assert json.loads(store.path.read_text(encoding='utf-8')) == {
+        'version': 1, 'preferences': {**asdict(draft), 'extension': extension}}
 
 
 def test_atomic_write_failure_keeps_previous_record(tmp_path, monkeypatch):
