@@ -27,9 +27,9 @@ CONTROLS = """controls:
   c        continuous playlist from the selected song; toggle off without restarting audio
            picker: c or Repeat from selection starts the full list at the highlighted song
   command strip: Panic, Save, repeat and Playlist left; Previous, Play/Pause and Next centered;
-                 Settings and volume right. Tab focuses buttons; side groups scroll independently.
+                 Settings and volume right. Tab focuses buttons; groups wrap on narrow terminals.
   footer: shortcuts not shown in the command strip; hover over buttons for their shortcuts.
-  ⏮ button: previous playlist song (wraps), repeat on or off; preserves pause and volume.
+  ← button: previous playlist song (wraps), repeat on or off; preserves pause and volume.
             Select a song in Playlist first. No new key; this does not restart the current song.
   The model line shows the chosen model (or Gentle Shell default) and session usage.
   Compact gives the spectrum more room by trimming spacing, even on short terminals.

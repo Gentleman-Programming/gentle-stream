@@ -21,7 +21,7 @@ SECTIONS = (
 )
 LABELS = {'height': 'Minimum bar height (5–30 rows)', 'bands': 'Bands (8–128)',
           'refresh_hz': 'Refresh (5–30 Hz)', 'smoothing': 'Smoothing (0–1)',
-          'peak_hold': 'Peak hold (0–3 seconds)', 'icon_gap': 'Icon-label gap (1–3 cells)',
+          'peak_hold': 'Peak hold (0–3 seconds)', 'icon_gap': 'Toolbar icon gap (1–3 cells)',
           'background': 'Custom background (#RRGGBB, gentle theme)', 'accent': 'Accent (#RRGGBB)',
           'show_visualizer': 'Show visualizer', 'show_controls': 'Show controls',
           'show_input': 'Show mood input', 'show_footer': 'Show footer',

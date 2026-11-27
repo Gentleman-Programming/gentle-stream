@@ -110,7 +110,7 @@ async def test_normal_selection_remembers_full_list_for_toolbar_and_errors(ui):
         await pilot.pause()
         assert "old daemon: unknown command" in shown(app, "#status")
         p.play.assert_not_called()
-        assert "off" in str(app.query_one("#continuous", Button).label)
+        assert app.query_one("#continuous", Button).tooltip == "Repeat: Off (c)"
         assert "Future" not in shown(app, "#state")
         assert "Audible" in shown(app, "#state")
         p.set_playlist.side_effect = None

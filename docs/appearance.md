@@ -54,28 +54,25 @@ Settings or discarding an appearance preview won't undo an output switch.
 | Refresh | 5–30 Hz | 15 |
 | Smoothing | 0–1, retained fraction of previous visual frame | 0 |
 | Peak hold | 0–3 seconds; zero disables | 0 |
-| Icon-label gap | 1–3 terminal cells | 2 |
+| Toolbar icon gap | 1–3 terminal cells | 2 |
 | Visibility | independent visualizer, controls, mood input, footer, track details, model line | all shown |
 | Compact | tighter player layout that frees space for the visualizer, even at 80×24 | off |
 
 At wide terminal widths, each configured band occupies additional columns rather than leaving the rest of the graph blank. Segmented bars retain their one-cell spacing. These are spectrum **visualizations**, not DSP equalizer controls. Fonts, glyph
 availability and terminal transparency are terminal-owned; no unsupported font or
 terminal-transparent theme is offered. Custom colors can reduce contrast: choose a
-readable accent/background pair or use Defaults. The command strip shares the
-header and footer background and uses one row at all terminal sizes. A single
-horizontal volume gauge sits between −/+ to
-the left of Settings: eight pink `▰/▱` segments with the exact numeric percentage
-to their right. The volume controls still move in 5% steps (Up/Down in 1% steps);
-because there are only eight segments, not every numeric step changes a segment.
-Transport controls stay centered, and the side groups scroll independently.
-The paused Play glyph alone uses blue without changing its button background or
-position. Track details and mood share one upper metadata row with full hover
-tooltips, while the model, playback state and status remain separate. At 24 rows
-or fewer the same one-row gauge remains visible. At a fixed terminal size, use
+readable accent/background pair or use Defaults. The command strip keeps transport
+centered and wraps its groups onto two or three rows when they no longer fit.
+The exact volume percentage sits between − and +. These buttons move in 5% steps
+(Up/Down in 1% steps). Play/Pause changes glyph without moving the button.
+Track details and mood share one upper metadata row with full hover tooltips,
+while the model, playback state and status remain separate. Short terminals can
+give up spectrum rows to make room for the controls. At a fixed terminal size, use
 **Preview** to compare Compact layout on and off: it reduces padding and margins
 so the visualizer has more room, including at 80×24.
-Hiding the graph shrinks the panel rather than reserving empty graph space. **/** temporarily reveals and focuses a hidden mood input without changing its
-saved visibility; applying preferences again restores the configured visibility.
+Hiding the graph shrinks the panel rather than reserving empty graph space.
+**/** or **✎** temporarily reveals and focuses a hidden mood input without
+changing its saved visibility. Esc restores the configured visibility.
 
 Refresh uses one UI-thread timer. Applying preferences stops the previous timer;
 no audio threads are created or replaced. Hidden visualizers still poll the existing

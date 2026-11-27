@@ -73,7 +73,7 @@ async def test_panic_button_shortcut_and_reopen_error_are_honest(ui, size):
     app, p, shell, store, library = ui
     async with app.run_test(size=size) as pilot:
         panic = app.query_one("#panic", Button)
-        assert str(panic.label) == "Panic" and "F4" in str(panic.tooltip)
+        assert str(panic.label) == '!↺' and 'F4' in str(panic.tooltip)
         assert app.query_one("#commands-left").region.contains_region(panic.region)
         assert await pilot.click("#panic")
         p.panic.assert_called_once()
@@ -87,7 +87,7 @@ async def test_panic_button_shortcut_and_reopen_error_are_honest(ui, size):
         await pilot.press("f4")
         assert "device [busy]" in shown(app, "#status")
         assert "Paused" in shown(app, "#state") and app.is_running
-        assert str(app.query_one("#play", Button).label) == "▶"
+        assert str(app.query_one('#play', Button).label) == '▸'
         assert not store.path.exists() and not library.path.exists()
         shell.interpret_with_usage.assert_not_called()
         shell.list_models.assert_not_called()
