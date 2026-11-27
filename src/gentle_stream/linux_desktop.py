@@ -35,8 +35,9 @@ class Preview:
         try:
             # Native VTE owns the PTY and child watch. Keep the terminal alive through
             # the bounded spawn callback, even if the window is closed meanwhile.
+            # PyGObject requires child_setup_data even when omitted from the docstring.
             self.terminal.spawn_async(pty_flags, str(self.root), argv, None, 0,
-                                      None, 5000, None, self.spawned, None)
+                                      None, None, 5000, None, self.spawned, None)
         except (TypeError, RuntimeError):
             self.spawned(self.terminal, -1, True, None)
 

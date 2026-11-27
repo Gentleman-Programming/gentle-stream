@@ -24,13 +24,20 @@ def host(monkeypatch, tmp_path):
 
 def test_close_while_vte_is_starting_reaps_only_the_owned_child(host):
     preview, window, terminal, glib, root = host
+
+    def spawn_async(pty_flags, cwd, argv, envv, spawn_flags, child_setup,
+                    child_setup_data, timeout, cancellable, callback, callback_data, /):
+        assert cwd == str(root)
+        assert argv == [str(root / 'venv/bin/python'), '-I', '-B', '-m', 'gentle_stream.linux_desktop_child']
+        assert spawn_flags == 0  # no PATH search, shell, external terminal, or daemon
+        assert (pty_flags, envv, child_setup, child_setup_data) == (0, None, None, None)
+        assert (timeout, cancellable, callback_data) == (5000, None, None)
+        assert callback == preview.spawned
+
+    terminal.spawn_async.side_effect = spawn_async
     preview.start()
+    terminal.feed.assert_not_called()
     args = terminal.spawn_async.call_args.args
-    assert args[1] == str(root)
-    assert args[2] == [str(root / 'venv/bin/python'), '-I', '-B', '-m', 'gentle_stream.linux_desktop_child']
-    assert args[4] == 0  # no PATH search, shell, external terminal, or daemon
-    assert len(args) == 10
-    assert args[5:8] == (None, 5000, None)  # child_setup, timeout, cancellable
     assert preview.close() is True
     window.destroy.assert_not_called()
     desktop.signal.pidfd_send_signal.assert_not_called()
