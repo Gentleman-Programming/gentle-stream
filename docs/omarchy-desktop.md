@@ -32,11 +32,72 @@ The preview starts with local music. It does not make a model request until you
 submit a mood. To use moods, make `gentle-shell` available on the menu session's
 `PATH` with its usual model configuration. Local playback does not require it.
 
+## Test both interfaces with Gentle Shell
+
+Use the same preview checkout for both tests. Record its commit with
+`git rev-parse --short HEAD`. The terminal player opens from `/gentle:music`;
+the GTK app opens separately and uses Gentle Shell only to interpret moods.
+There is no GTK launch command in Gentle Shell yet ([issue #3581][shell-desktop]).
+
+### Terminal: `/gentle:music`
+
+From the checkout root, in the interactive shell where `gentle-shell` already
+works, build the candidate environment and start Gentle Shell with that copy
+of Stream first on `PATH`. The subshell isolates the player socket without
+hiding your existing Gentle Shell model configuration. `uv` may download locked
+project dependencies, but the command below does not install a global tool or
+a new Python interpreter.
+
+```sh
+(
+  set -e
+  command -v gentle-shell >/dev/null
+  preview=$(mktemp -d /tmp/gs-omarchy.XXXXXX)
+  mkdir -m 700 "$preview/run"
+  UV_PROJECT_ENVIRONMENT="$preview/venv" \
+    uv sync --frozen --no-dev --python 3.13 --no-python-downloads
+  export PATH="$preview/venv/bin:$PATH"
+  export XDG_RUNTIME_DIR="$preview/run"
+  test "$(command -v gentle-stream)" = "$preview/venv/bin/gentle-stream"
+  status=$(gentle-stream ctl status --json)
+  printf '%s\n' "$status"
+  "$preview/venv/bin/python" -c 'import json, sys; sys.exit(json.loads(sys.argv[1]).get("running") is not False)' "$status"
+  gentle-shell
+)
+```
+
+The initial status should show `"running": false`. In Gentle Shell, run
+`/gentle:music`, then submit a mood such as `soft rain, lo-fi piano`. Verify
+that the music changes, the new toolbar fits when resizing, and Playlists and
+Settings open and close. Quit the player with `q`; `b` leaves its daemon playing.
+The temporary environment is retained for inspection.
+
+### GTK app: menu launch and the same installed launcher from a shell
+
+1. Run `./scripts/install-omarchy-app.sh` from the same checkout. Open **Gentle
+   Stream (Preview)** from the menu and confirm music starts without a prompt.
+2. Submit the same mood. If the menu reports a `mise` error, record it as a
+   **menu environment failure**, then close the preview. From the interactive
+   terminal where `gentle-shell` works, run the installed launcher directly:
+
+   ```sh
+   data=${XDG_DATA_HOME:-"$HOME/.local/share"}
+   case "$data" in /*) ;; *) data="$HOME/.local/share" ;; esac
+   /usr/bin/python3 -I -B "$data/gentle-stream/omarchy/linux_desktop.py"
+   ```
+
+   This opens the same GTK app and uses its installed Python environment, but
+   inherits the interactive shell's `PATH`. Submit the mood again and report
+   menu and terminal-launch results separately. Close it before retrying; do not
+   edit `.desktop` files, load shell startup scripts, or rewrite your `PATH`.
+3. Close GTK with `Super+W` during startup and again during playback. Its audio
+   should stop; a separate terminal player, if one is running, should continue.
+
 ## Verification limits
 
-Automated checks use fake GTK/VTE, process, audio and installer boundaries.
-Native launch, window-manager icon behavior, and playback on a real Omarchy
-session are not yet verified. To smoke-test on Omarchy, open the menu entry,
-confirm music starts without a model request, then close the window while it is
-opening and again during playback. Check that the preview's own audio stops and
-any separately running CLI session keeps playing.
+Automated checks use fake GTK/VTE, process, audio and installer boundaries. The
+previous preview commit `e571d6e` was tested on Omarchy for menu launch, local
+playback and close. Repeat the checks above on this candidate; the previous
+smoke does not verify the updated UI or graphical mood handling.
+
+[shell-desktop]: https://github.com/Gentleman-Programming/gentle-shell/issues/3581
