@@ -5,7 +5,7 @@ import pytest
 from gentle_stream import genres
 from gentle_stream.composer import Composer
 from gentle_stream.genres.base import Piece
-from gentle_stream.synth import SR
+from gentle_stream.synth import SR, lp
 from gentle_stream.style import Style
 
 G = genres.get("synthwave")
@@ -166,11 +166,54 @@ def test_pad_is_a_detuned_stack_and_the_lead_has_vibrato():
     assert np.std(freqs) > 1.0                              # vibrato moves the pitch
 
 
+@pytest.mark.parametrize(
+    "midi,presence,upper,level,peak,release",
+    [
+        (60, 0.057060, 0.003122, 0.216961, 0.521828, 0.219692),
+        (69, 0.080878, 0.005579, 0.213988, 0.508136, 0.216864),
+        (81, 0.240841, 0.014274, 0.206624, 0.470231, 0.215616),
+    ],
+)
+def test_saw_lead_tames_upper_harmonics_without_losing_presence(midi, presence, upper, level, peak, release):
+    # Reference measurements are from the same 0.45 s, unity-velocity dry notes before reshaping.
+    inst = G.instruments(np.random.default_rng(3), SR, None)
+    x = inst.lead(midi, 0.45)
+    assert len(x) == int(0.6 * SR)
+    assert np.all(np.isfinite(x)) and np.max(np.abs(x)) <= peak + 1e-6
+    rms = lambda a, b: np.sqrt(np.mean(x[int(a * SR):int(b * SR)] ** 2))
+    assert rms(0, 0.6) == pytest.approx(level, rel=0.02)
+    assert rms(0.55, 0.59) / rms(0.3, 0.4) == pytest.approx(release, rel=0.01)
+
+    # Measure after attack and before vibrato onset; fractions discount any overall level change.
+    seg = x[int(0.04 * SR):int(0.19 * SR)]
+    power = np.abs(np.fft.rfft(seg * np.hanning(len(seg)))) ** 2
+    hz = np.fft.rfftfreq(len(seg), 1 / SR)
+    fraction = lambda a, b: power[(hz >= a) & (hz < b)].sum() / power.sum()
+    assert fraction(1500, 3000) >= 0.95 * presence
+    assert fraction(5000, 12000) <= 0.6 * upper
+
+
+def test_saw_lead_preserves_velocity_and_echo_taps():
+    inst = G.instruments(np.random.default_rng(3), SR, None)
+    x = inst.lead(69, 0.45)
+    # Use a delay longer than the dry note to isolate the two repeat gains and onset times.
+    delay = 0.65
+    d = int(delay * SR)
+    expected = np.zeros(len(x) + 2 * d)
+    expected[:len(x)] = x
+    wet = lp(x, 3000, SR)
+    expected[d:d + len(x)] = 0.32 * wet
+    expected[2 * d:] = 0.12 * wet
+    np.testing.assert_array_equal(inst.lead(69, 0.45, 0.9, echo=delay), expected * 0.9)
+
+
 def test_samples_backend_uses_gm_synths_and_the_electronic_kit():
     calls = []
 
     class Fake:
         def play(self, p, m, dur, vel=1.0):
+            if p.program == 81:
+                assert p.rms == pytest.approx(0.19000753476540946, abs=1e-12)
             calls.append(("play", p.program, p.bank))
             return np.zeros(64)
 

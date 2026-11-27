@@ -123,13 +123,13 @@ class Instruments:
     """Procedural electro-house voices. Tonal notes are cached per piece; the drums are a few noise variants drawn
     once from the piece's generator."""
 
-    def __init__(self, rng: np.random.Generator, sr: int = SR):
+    def __init__(self, rng: np.random.Generator, sr: int = SR, *, snare_snap_decay: float = 40.0):
         self.rng, self.sr = rng, sr
         self._cache: dict[tuple, np.ndarray] = {}
         self._raw: dict[int, np.ndarray] = {}
         self._kick = self._make_kick()
         self._claps = [self._make_clap() for _ in range(2)]
-        self._snare = self._make_snare()
+        self._snare = self._make_snare(snare_snap_decay)
         self._hats = [self._make_hat(False) for _ in range(3)]
         self._open = [self._make_hat(True) for _ in range(2)]
         self._crash = self._make_crash()
@@ -267,10 +267,11 @@ class Instruments:
         env = env + 0.45 * np.where(t >= 0.03, np.exp(-(t - 0.03) * 16), 0.0)
         return noise * np.minimum(env, 1.2) * 0.5
 
-    def _make_snare(self):
+    def _make_snare(self, snap_decay):
         n = int(0.22 * self.sr); t = self._t(n)
         body = np.sin(2 * np.pi * 195 * t) * np.exp(-t * 30) * 0.6
-        snap = bp(self.rng.standard_normal(n), 1200, 8000, self.sr) * np.exp(-t * 24)
+        # Keep the snap from trailing as far into the next 32nd-note roll hit.
+        snap = bp(self.rng.standard_normal(n), 1200, 8000, self.sr) * np.exp(-t * snap_decay)
         return (body + snap) * 0.6
 
     def _make_hat(self, open_):
@@ -308,7 +309,8 @@ def _rms(x: np.ndarray, sr: int) -> float:
 def _targets(sr: int) -> dict[str, float]:
     """RMS of the procedural voices' reference notes (middle C, 1 s): the sampled programs are scaled to it, so
     both backends sit in the same mix."""
-    p = Instruments(np.random.default_rng(0), sr)
+    # Preserve the sampled snare's calibration; the shorter snap is procedural-only.
+    p = Instruments(np.random.default_rng(0), sr, snare_snap_decay=24.0)
     out = {"pad": _rms(p.pad(60, 1.0, 0.8, 3000, 3000), sr), "kick": _rms(p.kick(), sr),
            "clap": _rms(p._claps[0], sr), "snare": _rms(p.snare(), sr), "hat": _rms(p._hats[0], sr),
            "open": _rms(p._open[0], sr), "crash": _rms(p.crash(), sr)}

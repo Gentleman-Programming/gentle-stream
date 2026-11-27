@@ -102,7 +102,7 @@ class Instruments:
         y = lp(bp(y, 80, cab * (1.0 if take % 2 == 0 else 0.86)), cab)          # cabinet
         env = adsr(n, self.sr, attack=0.002, decay=0.0, sustain=1.0, release=rel, hold=dur)
         if mute:
-            env *= np.exp(-t * 12)
+            env *= np.exp(-t * 18)  # rein in the post-amp tail between tight sixteenth-note chugs
         return _fade(y * env * 0.35, self.sr)
 
     def _clean_guitar(self, notes, dur, vel, mute, take):

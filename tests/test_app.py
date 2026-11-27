@@ -10,6 +10,7 @@ from gentle_stream.presets import PresetStore
 from gentle_stream.style import Style
 from tests.test_daemon import runtime, wait_for  # noqa: F401  (fixture: private runtime dir, fake audio, cleanup)
 from tests.test_player import FakeStream
+from tests.test_ui_toolbar_contracts import ui as toolbar_ui
 
 
 class FakeShell:
@@ -546,13 +547,13 @@ async def test_the_footer_shows_back_and_quit():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size, min_rows", [((160, 45), 18), ((80, 24), 5)])
-async def test_the_spectrum_fills_the_free_height_and_the_info_sits_by_the_input(size, min_rows):
-    app, _ = make_app(FakeShell())
+async def test_the_spectrum_fills_the_free_height_and_the_info_sits_by_the_input(size, min_rows, toolbar_ui):
+    app, _, _, _, _ = toolbar_ui
     async with app.run_test(size=size) as pilot:
         await pilot.pause(0.3)
         spectrum = app.query_one("#spectrum")
         assert spectrum.region.height >= min_rows
-        assert app.query_one("#commands").region.height == 1
+        assert app.query_one("#commands").region.height == (3 if size[0] >= 84 else 6)
         assert len(str(spectrum.render()).split("\n")) == spectrum.region.height
         status, mood = app.query_one("#status"), app.query_one("#mood")
         gap = mood.region.y - (status.region.y + status.region.height)

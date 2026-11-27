@@ -38,8 +38,8 @@ async def test_switch_and_system_default_without_restarting(output_ui, launch):
         if launch == 'settings':
             await pilot.press('f2')
             origin = app.screen
-            origin.query_one('#pref-accent', Input).value = '#123456'
-            assert await pilot.click('#settings-output')
+            origin.query_one('#appearance-accent', Input).value = '#123456'
+            assert await pilot.click('#appearance-audio')
         else:
             origin = root
             await pilot.press('o')
@@ -56,9 +56,10 @@ async def test_switch_and_system_default_without_restarting(output_ui, launch):
         assert app.screen is origin
         assert str(root.query_one('#status').render()) == 'Output: USB [b] DAC'
         if launch == 'settings':
-            assert shown(app, '#settings-status') == 'Output: USB [b] DAC'
-            assert origin.query_one('#pref-accent', Input).value == '#123456'
+            assert shown(app, '#appearance-status') == 'Output: USB [b] DAC'
+            assert origin.query_one('#appearance-accent', Input).value == '#123456'
             await pilot.press('escape')
+            assert await pilot.click('#appearance-discard')
         await pilot.press('o')
         await app.workers.wait_for_complete()
         assert app.screen.query_one('#devices', OptionList).highlighted == 2

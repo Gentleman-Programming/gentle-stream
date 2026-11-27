@@ -13,27 +13,28 @@ CONTROLS = """controls:
            recovery does not guarantee to fix stutter; reopen failures are shown, not Playing.
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
   Ctrl+P   open the command palette (also clickable in the header)
-  F2       Settings: live appearance, visibility, audio output, and mood model selection
+  F2       open Appearance Settings: draft preview, Audio → Output, and Models
            always available, even with hidden controls/input/footer; also in the command palette
   m        choose the model Gentle Shell uses directly
   o        choose this app's audio output (also in Settings)
            Enter switches without restarting the app; Esc closes before selection.
            System default follows the OS default without changing it.
   s        save what is playing: Saved prompts, new playlist, or existing playlist
-  p        Playlist (also on the command strip): My playlist / Default playlist
+           X Close or Esc cancels without saving
+  p        open My playlist (also on the command strip); l opens Default playlist directly
            My playlist opens groups, then songs in the same panel; Backspace goes back
-           Left/Right switch playlists; Up/Down highlight entries
-           click or Enter applies; d deletes only saved songs; Esc closes
+           Left/y and Right/l switch tabs; Up/Down highlight entries
+           click or Enter applies; d deletes only saved songs; X Close or Esc closes
   c        continuous playlist from the selected song; toggle off without restarting audio
            picker: c or Repeat from selection starts the full list at the highlighted song
   command strip: Panic, Save, repeat and Playlist left; Previous, Play/Pause and Next centered;
-                 Settings and volume right. Tab focuses buttons; side groups scroll independently.
+                 Settings and volume right. Tab focuses buttons; groups wrap on narrow terminals.
   footer: shortcuts not shown in the command strip; hover over buttons for their shortcuts.
-  ⏮ button: previous playlist song (wraps), repeat on or off; preserves pause and volume.
+  ← button: previous playlist song (wraps), repeat on or off; preserves pause and volume.
             Select a song in Playlist first. No new key; this does not restart the current song.
   The model line shows the chosen model (or Gentle Shell default) and session usage.
   Compact gives the spectrum more room by trimming spacing, even on short terminals.
-  Settings: Preview is temporary; Save & close keeps changes; Close or Esc discards unsaved appearance changes.
+  Save and Close applies appearance; X Close or Esc confirms discarding edits.
   UI-only preferences live in appearance.json; visualizer changes never change audio parameters.
   / temporarily reveals hidden mood input without saving visibility. Fonts belong to the terminal.
   See docs/appearance.md for settings ranges and storage recovery.

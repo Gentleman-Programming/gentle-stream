@@ -17,6 +17,10 @@
 </p>
 
 <p>
+<a href="#get-started"><strong>Get started</strong></a> &bull;
+<a href="#demo"><strong>Demo</strong></a> &bull;
+<a href="#terminal-preview"><strong>Terminal screenshot</strong></a> &bull;
+<a href="docs/player-interfaces.md"><strong>Player interfaces</strong></a> &bull;
 <a href="https://gentlemanprogramming.com/"><strong>Website</strong></a> &bull;
 <a href="https://www.youtube.com/@GentlemanProgramming"><strong>YouTube</strong></a> &bull;
 <a href="https://github.com/Gentleman-Programming/gentle-stream"><strong>GitHub</strong></a>
@@ -31,6 +35,7 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 <strong>It never ends, it never repeats exactly, and every note is newly composed.</strong>
 </p>
 
+<a id="terminal-preview"></a>
 <img width="100%" src="docs/assets/tui.svg" alt="The gentle-stream TUI playing a lo-fi piece called Café Rain for the mood 'rainy night in a small café': title, key, tempo and progression, a rose-coloured spectrum, playback state, the chosen model with the session's token usage, the mood input and the key bindings in the footer." />
 
 
@@ -43,6 +48,8 @@ pick, and gentle-stream composes and synthesizes the rest live, bar by bar.
 https://github.com/user-attachments/assets/60bed6fc-0c97-419e-8bc3-278c5a9967f0
 
 *2:35 · Spanish captions · Instrumental music · No voiceover.*
+
+If GitHub cannot load the video, see the [terminal screenshot](#terminal-preview).
 
 ## Features
 
@@ -95,6 +102,11 @@ Only describing a mood calls a model. The status line shows what that call used,
 ## Get started
 
 See [platform setup and audio verification](docs/platform-support.md) for the Linux, macOS, WSL2, and native Windows paths.
+
+On Omarchy, try the [standalone Linux desktop preview](docs/omarchy-desktop.md):
+`./scripts/install-omarchy-app.sh` from the preview checkout after installing the prerequisites.
+The preview embeds the TUI in its own GTK window and stops its own music on close;
+it does not attach to a CLI player. Native Omarchy GUI and audio are not yet verified.
 
 **Requirements**
 
@@ -174,9 +186,10 @@ Model extensions stay enabled on purpose: some providers (such as `claude-bridge
 ## Controls
 
 **F2** or **Settings** on the command strip opens [Appearance settings](docs/appearance.md):
-live spectrum styles, colors, layout and visibility, plus audio output and mood model selection. **Preview** is
-temporary; **Save & close** keeps the changes. F2 always works, even when the controls and footer
-are hidden. Click **Command palette** in the header (or press **Ctrl+P**) to find Settings.
+spectrum styles, colors, layout and visibility, plus audio output and mood model selection. The sample
+previews edits without changing the player; **Save and Close** applies them. F2 always works, even when the controls and footer
+are hidden. Click **Command palette** in the header (or press **Ctrl+P**) for **Settings**,
+**Panic restart**, **Choose model**, and **Save current prompt**.
 **Compact** reduces spacing around the spectrum and input to give the graph more room, even on
 short terminals.
 
@@ -201,10 +214,10 @@ without closing the UI.
 | `Ctrl+P` / header **Command palette** | Open the command palette |
 | `F2` / strip **Settings** | Settings: appearance, audio output and mood model; always available via `F2` |
 | `m` | Directly choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
-| `o` / **Audio output…** in Settings | Switch this app’s sounddevice output without restarting; `Enter` switches, `Esc` closes before selecting. **System default** uses the OS default without changing it. Not available with the WSL Windows audio bridge. |
-| `s` | Save the audible song to Saved prompts, new, or existing playlist; `Enter` saves, `Esc` cancels; replacement is scoped to that group |
-| `p` / strip **Playlist** | Open **My playlist** groups / **Default playlist**; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; `Esc` closes |
-| `c` / **↻ off/on** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
+| `o` / **Audio → Output** in Settings | Switch this app’s sounddevice output without restarting; `Enter` switches, `Esc` closes before selecting. **System default** uses the OS default without changing it. Not available with the WSL Windows audio bridge. |
+| `s` | Save the audible song to Saved prompts, a new playlist, or an existing playlist; `Enter` saves, **X Close** or `Esc` cancels; replacement is scoped to that group |
+| `p` / `l` / strip **Playlist** | Open **My playlist** (`p`) or **Default playlist** (`l`) in the same picker; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; **X Close** or `Esc` closes |
+| `c` / **⇄** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
 | `b` | Back: leave the app and keep the music playing in the background |
@@ -415,6 +428,17 @@ All music is generated: the composer builds every melody, counter-melody, bass l
 <div align="right"><a href="#top">Back to top</a></div>
 
 <div align="center"><img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/rose.png" width="28" alt="" /></div>
+
+## Launcher artwork
+
+The Python wheel includes `gentle_stream/assets/launcher-icon.png` (256 × 256 RGBA)
+and `gentle_stream/assets/launcher-icon.ico` (16, 32, 48, 64, 128 and 256 px RGBA PNG frames).
+Integrations can read either with `importlib.resources.files("gentle_stream").joinpath("assets", name)`.
+
+These wheel resources do not change the icon of the `gentle-stream` console entry point or host
+terminal, create shortcuts, or install a desktop launcher. The separate Omarchy installer uses
+its own rose-wave logo. See [Launcher artwork details](docs/launcher-artwork.md) for provenance
+and the ICO regeneration recipe.
 
 ## Project layout
 

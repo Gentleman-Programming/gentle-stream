@@ -219,6 +219,19 @@ class Instruments:
         return self._rim * g
 
 
+class _ElectroInstruments(Instruments):
+    """Electro-only bass voicing; the shared base remains the GM calibration reference."""
+
+    def _bass(self, m, dur, vel):
+        n = int((dur + 0.03) * self.sr); t = self._t(n); f = mtof(m)
+        s = 0.65 * osc("square", f, n, self.sr, 0.25) + 0.35 * osc("saw", f, n, self.sr)
+        w = np.exp(-t * 28)
+        # Keep more note harmonics in the body without opening the pluck filter.
+        tone = lp(s, 560, self.sr) * (1 - w) + lp(s, 1200, self.sr) * w
+        env = adsr(n, self.sr, 0.008, 0.06, 0.65, 0.025, hold=dur)
+        return distort(tone * env * 1.5, 1.4) * vel * 0.6
+
+
 def _rms(x: np.ndarray, sr: int) -> float:
     return float(np.sqrt(np.mean(np.square(x[:int(0.5 * sr)])))) + 1e-12
 
@@ -312,7 +325,7 @@ class ElectroGenre(Genre):
               "nylon": "pluck synth", "pad": "string synth pad"}
 
     def instruments(self, rng, sr, sampled):
-        return SampledVoices(sampled, rng, sr) if sampled is not None else Instruments(rng, sr)
+        return SampledVoices(sampled, rng, sr) if sampled is not None else _ElectroInstruments(rng, sr)
 
     def start(self, piece):
         r = piece.rng

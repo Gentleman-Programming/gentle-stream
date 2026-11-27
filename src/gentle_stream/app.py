@@ -18,18 +18,19 @@ from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.markup import escape
-from textual.containers import Horizontal, HorizontalScroll, Vertical
+from textual.message import Message
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Footer, Header, Input, OptionList, Select, Static, Tab, Tabs
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from .appearance import Preferences, PreferenceStore
+from .appearance import Preferences, PreferenceStore, background_color
 from .appearance_ui import SettingsScreen
 from .device_ui import DevicePicker, missing_output
+from .modal_header import ModalHeader
 from .visualizer import Spectrum
-from .volume_meter import render_volume_meter
 from .bridge import GentleShell, InterpretError, Usage
 from .client import PlayerError
 from .player import Player
@@ -39,6 +40,7 @@ from .presets import NAME_MAX, Preset, PresetError, PresetStore, normalize_name
 from .style import Style
 
 DEFAULT_MODEL_LABEL = "Gentle Shell default"
+PLAY_GLYPH, PAUSE_GLYPH = "▸", "Ⅱ"
 
 # gentlemanprogramming.com palette
 GENTLEMAN_THEME = Theme(
@@ -55,6 +57,7 @@ GENTLEMAN_THEME = Theme(
     error="#ff718f",
     dark=True,
     variables={
+        "toolbar-accent": "#ff76c3",
         "text-muted": "#a78e9b",
         "border": "#ff76c3",
         "border-blurred": "#342230",
@@ -85,13 +88,18 @@ class ModelPicker(ModalScreen[str | None]):
     DEFAULT_CSS = """
     ModelPicker { align: center middle; }
     ModelPicker > Vertical { width: 60; max-width: 100%; height: auto; max-height: 80%;
-                             border: round $primary; padding: 1 2; background: $surface; }
-    ModelPicker .heading { color: $foreground; text-style: bold; }
+                             overflow-y: auto; border: round $primary; padding: 0 1; background: $surface; }
     ModelPicker #model-description { color: $text-muted; }
     ModelPicker #picker-status { color: $accent; margin-top: 1; }
     ModelPicker OptionList, ModelPicker OptionList:focus { height: auto; max-height: 20; border: none;
                                                           background: $surface; }
     """
+
+    class ListingFinished(Message, bubble=False):
+        def __init__(self, models: list[str], error: str | None = None):
+            super().__init__()
+            self.models = models
+            self.error = error
 
     def __init__(self, shell: GentleShell):
         super().__init__()
@@ -99,7 +107,7 @@ class ModelPicker(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Choose a mood model", classes="heading")
+            yield ModalHeader(Static("Model for mood interpretation", classes="heading"), self.action_dismiss_picker)
             yield Static("For future moods · music keeps playing", id="model-description")
             yield Static("Loading models…", id="picker-status")
             yield OptionList(Option(DEFAULT_MODEL_LABEL, id=""), id="models")
@@ -112,16 +120,25 @@ class ModelPicker(ModalScreen[str | None]):
     def _load(self) -> None:
         try:
             models = self.shell.list_models()
-        except InterpretError as e:
-            self.app.call_from_thread(self.query_one("#picker-status", Static).update, f"Could not list models: {escape(str(e))}")
-            return
-        self.app.call_from_thread(self._show, models)
+        except InterpretError as error:
+            result = self.ListingFinished([], str(error))
+        except Exception:
+            # Launcher failures must not take the player down.
+            result = self.ListingFinished([], 'check Gentle Shell and try again.')
+        else:
+            result = self.ListingFinished(models)
+        if not get_current_worker().is_cancelled:
+            self.post_message(result)
 
-    def _show(self, models: list[str]) -> None:
+    def on_model_picker_listing_finished(self, event: ListingFinished) -> None:
+        status = self.query_one('#picker-status', Static)
+        if event.error is not None:
+            status.update(Text(f'Could not list models: {event.error}'))
+            return
         options = self.query_one(OptionList)
-        options.add_options([Option(Text(m), id=m) for m in models])
+        options.add_options([Option(Text(model), id=model) for model in event.models])
         options.highlighted = 0
-        self.query_one("#picker-status", Static).update(Text(f"{len(models)} models · current: {model_label(self.shell.model)}"))
+        status.update(Text(f'{len(event.models)} models · current: {model_label(self.shell.model)}'))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id or None)
@@ -137,14 +154,13 @@ class SaveDialog(ModalScreen[str | None]):
     DEFAULT_CSS = """
     SaveDialog { align: center middle; }
     SaveDialog > Vertical { width: 60; max-width: 100%; height: auto; max-height: 100%; overflow-y: auto;
-                            border: round $primary; padding: 1 2; background: $surface; }
-    SaveDialog .heading { color: $foreground; text-style: bold; margin-bottom: 1; }
+                            border: round $primary; padding: 0 1; background: $surface; }
     SaveDialog .field-label { color: $accent; }
     SaveDialog #save-submit { height: 1; min-height: 1; border: none; background: $primary;
-                             color: $background; text-style: bold; margin-top: 1; }
+                             color: $background; text-style: bold; }
     SaveDialog #save-submit:focus { text-style: bold; }
     SaveDialog #save-playlist, SaveDialog #save-playlist-label { display: none; }
-    SaveDialog #save-status { color: $text-muted; margin-top: 1; }
+    SaveDialog #save-status { color: $text-muted; }
     SaveDialog Input { border: round $panel; background: $surface; }
     SaveDialog Input:focus { border: round $primary; }
     """
@@ -158,7 +174,7 @@ class SaveDialog(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Save what is playing", classes="heading")
+            yield ModalHeader(Static("Save what is playing", classes="heading"), self.action_cancel)
             yield Static("Song name", id="save-name-label", classes="field-label")
             yield Input(self.initial, placeholder="Song name", max_length=NAME_MAX, id="save-name")
             yield Static("Destination", id="save-destination-label", classes="field-label")
@@ -192,8 +208,9 @@ class SaveDialog(ModalScreen[str | None]):
         self._save()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._save()
+        if event.button.id == "save-submit":
+            event.stop()
+            self._save()
 
     def _save(self) -> None:
         try:
@@ -219,33 +236,36 @@ class PresetPicker(ModalScreen[Preset | None]):
         Binding("d,delete", "delete", "Delete"),
         Binding("backspace", "groups", "Groups"),
         Binding("c", "continuous", "Continuous from selection"),
-        Binding("left", "switch_playlist('my-playlist')", "My playlist", priority=True),
-        Binding("right", "switch_playlist('default-playlist')", "Default playlist", priority=True),
+        Binding("left,y", "switch_playlist('my-playlist')", "My playlist", priority=True),
+        Binding("right,l", "switch_playlist('default-playlist')", "Default playlist", priority=True),
     ]
     DEFAULT_CSS = """
     PresetPicker { align: center middle; }
-    PresetPicker > Vertical { width: 72; max-width: 100%; height: 80%; border: round $primary; padding: 1 2;
+    PresetPicker > Vertical { width: 72; max-width: 100%; height: 90%; border: round $primary; padding: 0 1;
                               background: $surface; }
-    PresetPicker .heading { color: $foreground; text-style: bold; }
     PresetPicker #picker-description { color: $text-muted; }
-    PresetPicker Tabs { background: $surface; }
-    PresetPicker #presets-breadcrumb { color: $accent; }
-    PresetPicker #presets-status { color: $text-muted; margin-top: 1; }
+    PresetPicker Tabs, PresetPicker Underline { background: $surface; }
+    PresetPicker Tab.-active { color: $primary; text-style: bold; }
+    PresetPicker Tabs:focus Tab.-active { text-style: bold reverse; }
+    PresetPicker #presets-breadcrumb { color: $accent; text-style: bold; height: 1;
+                                      text-wrap: nowrap; text-overflow: ellipsis; }
+    PresetPicker #presets-status { color: $text-muted; max-height: 3; overflow-y: auto; }
     PresetPicker #picker-actions { height: 1; }
-    PresetPicker Button { height: 1; min-height: 1; width: auto; border: none; padding: 0 1; }
-    PresetPicker Button:focus { text-style: bold reverse; }
+    PresetPicker #picker-actions Button { height: 1; min-height: 1; min-width: 0; width: auto;
+                                         border: none; padding: 0 1; }
+    PresetPicker #picker-actions Button:focus { text-style: bold reverse; }
     PresetPicker OptionList, PresetPicker OptionList:focus { height: 1fr; min-height: 1; border: none;
                                                             background: $surface; }
     """
     EMPTY = "No saved prompts yet — press s to save what is playing"
 
-    def __init__(self, store: PresetStore, library: PlaylistLibrary | None = None):
+    def __init__(self, store: PresetStore, library: PlaylistLibrary | None = None, *, start_default: bool = False):
         super().__init__()
         self.store = store
         self.library = library if library is not None else PlaylistLibrary()
-        self.is_default = False
+        self.is_default = start_default
         self.group: str | None = None
-        self.at_groups = True
+        self.at_groups = not start_default
         self.groups: list[str | None] = []
         self.songs: list[Preset] = []
         self.selected_index = 0
@@ -257,15 +277,15 @@ class PresetPicker(ModalScreen[Preset | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Playlists", classes="heading")
+            yield ModalHeader(Static("Playlists", classes="heading"), self.action_cancel)
             yield Static("Generative styles · not recordings", id="picker-description")
-            yield Tabs(Tab("My playlist", id="my-playlist"),
-                       Tab("Default playlist", id="default-playlist"), active="my-playlist")
+            yield Tabs(Tab("My playlist", id="my-playlist"), Tab("Default playlist", id="default-playlist"),
+                       active="default-playlist" if self.is_default else "my-playlist")
             yield Static(id="presets-breadcrumb")
             yield OptionList(id="presets")
             yield Static(id="presets-status")
             with Horizontal(id="picker-actions"):
-                yield Button("< My playlists", id="playlist-back", tooltip="Back to groups (Backspace)")
+                yield Button("< Back to groups", id="playlist-back", tooltip="Back to groups (Backspace)")
                 yield Button("Repeat from selection", id="playlist-loop", tooltip="Continuous from selected song (c)")
 
     def on_mount(self) -> None:
@@ -275,8 +295,11 @@ class PresetPicker(ModalScreen[Preset | None]):
         self.query_one(Tabs).active = tab_id
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
-        self.is_default = event.tab.id == "default-playlist"
-        self.at_groups = not self.is_default
+        is_default = event.tab.id == "default-playlist"
+        if is_default == self.is_default:
+            return
+        self.is_default = is_default
+        self.at_groups = not is_default
         self.group = None
         self._populate()
 
@@ -301,15 +324,19 @@ class PresetPicker(ModalScreen[Preset | None]):
         if not self.at_groups:
             rows = []
             for i, song in enumerate(self.songs):
-                prompt = Text(f"🌸  {song.name} — {song.mood or song.style.summary()}")
+                prompt = Text(f"✿   {song.name} — {song.mood or song.style.summary()}")
                 if i + 1 < len(self.songs):
                     prompt.append("\n ")  # Keep a blank display row even when a description wraps.
                 rows.append(Option(prompt, id=f"song-{i}"))
             options.add_options(rows)
         if options.option_count:
             options.highlighted = 0
-        self.query_one("#presets-breadcrumb", Static).update(
-            Text("My playlists" if self.at_groups else f"My playlists / {self.selection_name}"))
+        breadcrumb = "My playlist"
+        if self.is_default:
+            breadcrumb = self.selection_name
+        elif not self.at_groups:
+            breadcrumb += f" / {self.selection_name}"
+        self.query_one("#presets-breadcrumb", Static).update(Text(breadcrumb))
         self.query_one("#playlist-back", Button).display = not self.at_groups and not self.is_default
         self.query_one("#playlist-loop", Button).disabled = self.at_groups or not self.songs
         self._show_status(error)
@@ -319,7 +346,9 @@ class PresetPicker(ModalScreen[Preset | None]):
         if error:
             text = f"[$error]{escape(error)}[/]"
         elif self.is_default:
-            text = "Click / Enter to apply · c repeat from selection · read-only · Esc closes"
+            # Keep a single hint row at 40 columns so wrapped songs still have room.
+            self.query_one("#presets-status", Static).update("Enter apply · c repeat · read-only")
+            return
         elif self.at_groups:
             text = "Click / Enter opens a group · Esc closes"
             if not self.store.list() and len(self.groups) == 1:
@@ -328,7 +357,7 @@ class PresetPicker(ModalScreen[Preset | None]):
             text = "Click / Enter to apply · c repeat · d deletes song · Backspace groups"
         else:
             text = self.EMPTY + " · try Default playlist"
-        self.query_one("#presets-status", Static).update(text + " · Left/Right switch playlists")
+        self.query_one("#presets-status", Static).update(text + " · ←/y My · →/l Default")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -383,16 +412,39 @@ class PresetPicker(ModalScreen[Preset | None]):
         self.dismiss(None)
 
 
+class ControlsBar(Horizontal):
+    def fit(self, width: int, gap: int) -> int:
+        groups = list(self.query_children(Horizontal))
+        if len(groups) != 3:  # A resize can arrive while the screen is being torn down.
+            return 0
+        widths = []
+        for group in groups:
+            used = 0
+            for widget in group.children:
+                if widget.display:
+                    leading = gap if used else 0
+                    widget.styles.margin = (int(widget.id == 'volume-meter'), 0, 0, leading)
+                    used += leading + int(widget.styles.width.value)
+            widths.append(used)
+        left, transport, right = widths
+        # Both flexible side columns have equal width to keep the transport centered.
+        stacked = width < transport + 2 * (right + gap)
+        wrapped = not stacked and width < transport + 2 * (max(left, right) + gap)
+        self.set_class(wrapped, 'wrapped')
+        self.set_class(stacked, 'stacked')
+        self.styles.grid_columns = '1fr 1fr 1fr' if stacked else f'1fr {transport} 1fr'
+        return 9 if stacked else 6 if wrapped else 3
+
+
 class StreamApp(App):
     TITLE = "gentle-stream"
     SUB_TITLE = "real-time generative music"
     AUTO_FOCUS = None
     CSS = """
     Screen { background: $background; }
-    Header, #commands, #volume-meter, #commands Button { background: $footer-background; }
-    Header { color: $primary; }
+    Header { background: $footer-background; color: $primary; }
     HeaderIcon { width: 17; text-style: bold; pointer: pointer; }
-    #panel { padding: 1 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; }
+    #panel { padding: 1 2; margin: 1 1 0 1; height: 1fr; border: round $panel; background: $surface; overflow: hidden; }
     #title { text-style: bold; color: $primary; }
     #metadata, #title, #details, #mood-line, #state, #model, #status { height: 1; }
     #title, #details, #mood-line, #state, #model, #status { text-wrap: nowrap; text-overflow: ellipsis; }
@@ -401,21 +453,42 @@ class StreamApp(App):
     #mood-line { color: $accent; text-style: italic; }
     #spectrum { height: 1fr; min-height: 5; margin: 1 0; }
     #status { margin-top: 1; }
-    #commands { height: 1; margin: 0 1; overflow: hidden; }
-    #commands-left, #commands-right { width: 1fr; height: 1fr; overflow-x: auto; overflow-y: hidden;
-                                      scrollbar-size-horizontal: 0; align-vertical: bottom; }
+    #commands { layout: grid; height: 3; grid-size: 3 1; grid-rows: 3;
+                margin: 0 1; background: $footer-background; }
+    #commands.wrapped { height: 6; grid-size: 3 2; }
+    #commands.stacked { height: 9; grid-size: 3 3; }
+    #commands.wrapped > #commands-left, #commands.stacked > Horizontal {
+        column-span: 3; align-horizontal: center;
+    }
+    #commands > Horizontal { width: 1fr; height: 100%; }
+    #commands > #transport { width: auto; }
+    #commands.stacked > #transport { width: 1fr; }
+    #transport-offset { display: none; }
+    #commands.wrapped > #transport-offset { display: block; }
     #commands-right { align-horizontal: right; }
-    #transport { width: 15; height: 1fr; align-vertical: bottom; }
-    #volume-meter { width: 13; min-width: 13; height: 1; overflow: hidden; }
-    #commands Button { height: 1; min-height: 1; min-width: 4; width: auto; border: none;
-                       padding: 0; color: $primary; }
-    #commands #transport Button { width: 5; }
-    #commands Button:hover, #commands Button:focus { text-style: bold; color: $foreground; }
-    #commands #play.paused { color: #00a6ed; }
-    #commands #continuous { min-width: 7; }
+    #volume-meter { width: 4; height: 1; text-align: center; color: $foreground; }
+    #commands Button { width: 6; min-width: 0; height: 3; padding: 0;
+                       border: round $toolbar-muted; background: $background; color: $toolbar-accent; }
+    #commands #previous, #commands #next, #commands #quieter, #commands #louder,
+    #commands #mood-pencil { width: 4; }
+    #commands #continuous { color: $toolbar-muted; }
+    #commands #continuous.on { color: $toolbar-accent; border: round $toolbar-accent; }
+    #commands Button:focus, #commands #continuous:focus {
+        border: round $toolbar-accent; background: $background; color: $toolbar-accent;
+        background-tint: transparent; text-style: bold underline;
+    }
+    #commands Button:hover, #commands #continuous:hover {
+        border: round $toolbar-accent; background: $toolbar-accent; color: $background;
+        background-tint: transparent;
+    }
+    #commands Button:disabled, #commands #continuous:disabled {
+        border: round $toolbar-muted; background: $background; color: $toolbar-muted;
+        background-tint: transparent;
+    }
     #mood { margin: 0 1 1 1; border: round $panel; background: $surface; }
     #mood:focus { border: round $primary; }
     Screen.short #panel { padding: 0 2; margin-top: 0; }
+    Screen.tight-toolbar #mood { margin-bottom: 0; }
     Screen.compact #panel { padding: 0 1; margin-top: 0; }
     Screen.short #spectrum, Screen.compact #spectrum { margin: 0; }
     Screen.compact #status, Screen.compact #mood { margin-bottom: 0; margin-top: 0; }
@@ -430,6 +503,7 @@ class StreamApp(App):
         Binding("o", "pick_output", "Audio output", show=False),
         Binding("s", "save_preset", "Save", show=False),
         Binding("p", "pick_preset", "Playlist", show=False),
+        Binding("l", "pick_default_playlist", "Default playlist", show=False),
         Binding("c", "continuous", "Repeat list", show=False),
         Binding("plus,equals_sign", "volume(5)", "Vol +5", show=False),
         Binding("minus", "volume(-5)", "Vol -5", show=False),
@@ -457,6 +531,10 @@ class StreamApp(App):
         self.register_theme(GENTLEMAN_THEME)
         self.theme = GENTLEMAN_THEME.name
 
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return {**super().get_theme_variable_defaults(), 'toolbar-muted': '#a78e9b',
+                'toolbar-accent': self.current_theme.primary}
+
     def compose(self) -> ComposeResult:
         yield Header(icon="Command palette")
         with Vertical(id="panel"):
@@ -468,21 +546,23 @@ class StreamApp(App):
             yield Static(id="state")
             yield Static(id="model")
             yield Static(id="status")
-        with Horizontal(id="commands"):
-            with HorizontalScroll(id="commands-left", can_focus=False):
-                yield Button("Panic", id="panic", tooltip="Hard cut and restart current track (F4); no AI call")
-                yield Button("Save", id="save-command", tooltip="Save audible song (s)")
-                yield Button("↻ off", id="continuous", tooltip="Continuous playlist from selection (c)")
-                yield Button("Playlist", id="playlist-command", tooltip="Browse playlists (p)")
+        with ControlsBar(id="commands"):
+            with Horizontal(id="commands-left"):
+                yield Button("!↺", id="panic", tooltip="Hard cut and restart current track (F4); no AI call")
+                yield Button("▣↓", id="save-command", tooltip="Save audible song (s)")
+                yield Button("⇄", id="continuous", tooltip="Repeat: Off (c)")
+                yield Button("☰", id="playlist-command", tooltip="My playlist (p) · Default playlist (l)")
+            yield Static(id="transport-offset")
             with Horizontal(id="transport"):
-                yield Button("⏮", id="previous", tooltip="Previous song in playlist (wraps to last)")
-                yield Button("⏸", id="play", tooltip="Play / pause (Space)")
-                yield Button("⏭", id="next", tooltip="Next piece (n); next song when continuous")
-            with HorizontalScroll(id="commands-right", can_focus=False):
-                yield Button("-", id="quieter", tooltip="Volume down 5% (-); Down: 1%")
+                yield Button("←", id="previous", tooltip="Previous song in playlist (wraps to last)")
+                yield Button(PAUSE_GLYPH, id="play", tooltip="Pause (Space)")
+                yield Button("→", id="next", tooltip="Next piece (n); next song when continuous")
+            with Horizontal(id="commands-right"):
+                yield Button("−", id="quieter", tooltip="Volume down 5% (-); Down: 1%")
                 yield Static(id="volume-meter")
                 yield Button("+", id="louder", tooltip="Volume up 5% (+); Up: 1%")
-                yield Button("Settings", id="settings-command", tooltip="Appearance, audio output and mood model (F2)")
+                yield Button("✎", id="mood-pencil", tooltip="Describe a mood (/)")
+                yield Button("⛭", id="settings-command", tooltip="Appearance, audio output and mood model (F2)")
         yield Input(placeholder="Describe a mood… Enter sends, Esc leaves", id="mood")
         yield Footer(show_command_palette=False)
 
@@ -492,6 +572,8 @@ class StreamApp(App):
         self._w = {name: self.query_one(f"#{name}") for name in ("title", "details", "mood-line", "spectrum",
                                                                  "state", "model", "status", "volume-meter")}
         self._buttons = {b.id: b for b in self.query("#commands Button")}
+        for button in self._buttons.values():
+            button.styles.line_pad = 0  # Leave both content cells available in four-cell buttons.
         # Textual ignores mouse and Enter presses while a button's active-effect
         # class persists; transport commands must accept consecutive presses.
         for name in ("previous", "play", "next", "panic"):
@@ -499,7 +581,7 @@ class StreamApp(App):
         self._root = self.screen
         self._mood_input = self.query_one('#mood', Input)
         self._footer = self.query_one(Footer)
-        self._commands = self.query_one('#commands')
+        self._commands = self.query_one(ControlsBar)
         self._panel = self.query_one('#panel')
         self._metadata = self.query_one('#metadata')
         self.apply_preferences(self.preferences)
@@ -513,8 +595,22 @@ class StreamApp(App):
             self._status(escape(missing_output(missing)))
 
     def on_resize(self, event: events.Resize) -> None:
-        if self.screen_stack:
-            self.screen_stack[0].set_class(event.size.height <= 24, "short")
+        if hasattr(self, '_root'):
+            self._fit_layout(event.size.width, event.size.height)
+
+    def _fit_layout(self, width: int, height: int) -> None:
+        p = self.preferences
+        short = 0 < height <= 24
+        self._root.set_class(short, 'short')
+        controls = self._commands.fit(width - 2, p.icon_gap) if p.show_controls else 0
+        # Allow the spectrum to yield space to wrapped controls on short terminals.
+        panel_chrome = (5 + p.show_details + p.show_model + (not p.compact)
+                        + 5 * (not short and not p.compact))
+        tight_toolbar = short and controls > 3
+        self._root.set_class(tight_toolbar, 'tight-toolbar')
+        mood_margin = not p.compact and not tight_toolbar
+        chrome = 1 + p.show_footer + controls + (3 + mood_margin) * self._mood_input.display
+        self._w['spectrum'].styles.min_height = min(p.height, max(0, height - chrome - panel_chrome)) if height else p.height
 
     def on_unmount(self) -> None:
         self.shell.cancel()  # a running gentle-shell would otherwise keep the process alive after quit
@@ -545,11 +641,14 @@ class StreamApp(App):
         audible_name, audible_index = getattr(now, "playlist_name", None), getattr(now, "playlist_index", None)
         audible = f" · {escape(audible_name)} #{audible_index + 1}" if isinstance(audible_name, str) and isinstance(audible_index, int) else ""
         w["state"].update(f"{state} · piece {now.piece} · bar {now.bar + 1}{audible}")
-        w["volume-meter"].update(render_volume_meter(round(p.volume * 100), self.preferences.accent))
-        self._buttons["play"].label = "⏸" if p.playing else "▶"
-        self._buttons["play"].set_class(not p.playing, "paused")
-        gap = ' ' * self.preferences.icon_gap
-        self._buttons["continuous"].label = f"↻{gap}{'on' if p.continuous is True else 'off'}"
+        w["volume-meter"].update(f"{round(p.volume * 100)}%")
+        play = self._buttons['play']
+        play.label = PAUSE_GLYPH if p.playing else PLAY_GLYPH
+        play.tooltip = 'Pause (Space)' if p.playing else 'Play (Space)'
+        repeat = self._buttons['continuous']
+        enabled = p.continuous is True
+        repeat.set_class(enabled, 'on')
+        repeat.tooltip = f"Repeat: {'On' if enabled else 'Off'} (c)"
 
     def _show_model(self) -> None:
         session = f" · session: {self.session_usage.format()}" if self.session_usage else ""
@@ -560,22 +659,21 @@ class StreamApp(App):
         self._w["status"].update(text)
         self._w["status"].tooltip = self._w["status"].render()
 
-    def apply_preferences(self, preferences: Preferences, *, persist: bool = False) -> None:
-        """The single UI-only apply path. Validate/save before changing any widget or timer."""
+    def apply_preferences(self, preferences: Preferences) -> None:
+        """Apply validated appearance without changing the music or the saved record."""
         preferences.validate()
-        if persist:
-            self.preference_store.save(preferences)
         self.preferences = preferences
         if not hasattr(self, '_root'):
             return
         p = preferences
-        background = {'black': '#000000', 'charcoal': '#202020'}.get(p.theme, p.background)
+        background = background_color(p)
         # Textual 8.2.8 doesn't invalidate CSS when the assigned theme name is unchanged.
         # Alternate two registered names, bounding the registry while forcing live refresh.
         theme_name = 'appearance-b' if self.theme == 'appearance-a' else 'appearance-a'
         theme = Theme(name=theme_name, primary=p.accent, secondary='#f095c8', accent=p.accent,
                       foreground='#f6eff3', background=background, surface=background,
-                      panel='#342230', success='#b4e7c7', warning='#f2b86d', error='#ff718f', dark=True)
+                      panel='#342230', success='#b4e7c7', warning='#f2b86d', error='#ff718f', dark=True,
+                      variables={'toolbar-accent': p.accent})
         if (p.theme, background, p.accent) == ('gentle', GENTLEMAN_THEME.background, GENTLEMAN_THEME.primary):
             self.theme = GENTLEMAN_THEME.name
         else:
@@ -591,26 +689,36 @@ class StreamApp(App):
         self._w['model'].display = p.show_model
         spectrum = self._w['spectrum']
         spectrum.configure(p)
-        spectrum.styles.min_height = p.height
         spectrum.display = p.show_visualizer
         self._panel.styles.height = '1fr' if p.show_visualizer else 'auto'
         self._commands.display = p.show_controls
-        self._mood_input.display = p.show_input
         self._footer.display = p.show_footer
+        self._show_mood(p.show_input)
         if self._ui_timer is not None:
             self._ui_timer.stop()
         self._ui_timer = self.set_interval(1 / p.refresh_hz, self._tick)
         self._show_model()
 
     def action_settings(self) -> None:
-        if not isinstance(self.screen, (SettingsScreen, DevicePicker)):
-            self.push_screen(SettingsScreen(self))
+        if isinstance(self.screen, ModalScreen):
+            return
+
+        def saved(preferences: Preferences | None) -> None:
+            if preferences is not None:
+                self.apply_preferences(preferences)
+
+        self.push_screen(SettingsScreen(self.preference_store, self.preference_store.load(),
+                                        lambda: model_label(self.shell.model), self.action_pick_model,
+                                        self.action_pick_output), saved)
 
     def get_system_commands(self, screen):
         from textual.app import SystemCommand
         yield from super().get_system_commands(screen)
         yield SystemCommand('Settings', 'Appearance, audio output and mood model (F2)', self.action_settings)
         yield SystemCommand('Panic restart', 'Hard cut and restart current track, no AI (F4)', self.action_panic)
+        yield SystemCommand('Choose model', 'Choose the model Gentle Shell uses for moods (m)', self.action_pick_model)
+        yield SystemCommand('Save current prompt', 'Save the audible song to Saved prompts or a playlist (s)',
+                            self.action_save_preset)
 
     # ------------------------------------------------------------ actions
     def action_back(self) -> None:
@@ -671,12 +779,18 @@ class StreamApp(App):
         """Change the volume by whole percentage points, so repeated steps never drift."""
         self._control(lambda: self.player.set_volume((round(self.player.volume * 100) + percent) / 100))
 
+    def _show_mood(self, visible: bool) -> None:
+        self._mood_input.display = visible
+        self._buttons['mood-pencil'].display = not visible
+        self._fit_layout(self._root.size.width, self._root.size.height)
+
     def action_focus_mood(self) -> None:
-        self._mood_input.display = True
+        self._show_mood(True)
         self._mood_input.focus()
 
     def action_leave_mood(self) -> None:
         self.set_focus(None)
+        self._show_mood(self.preferences.show_input)
 
     def action_pick_model(self) -> None:
         def chosen(model: str | None) -> None:
@@ -730,12 +844,19 @@ class StreamApp(App):
                    "previous": self.action_previous, "panic": self.action_panic,
                    "settings-command": self.action_settings, "save-command": self.action_save_preset,
                    "playlist-command": self.action_pick_preset, "continuous": self.action_continuous,
+                   "mood-pencil": self.action_focus_mood,
                    "quieter": lambda: self.action_volume(-5), "louder": lambda: self.action_volume(5)}
         if action := actions.get(event.button.id):
             action()
 
     def action_pick_preset(self) -> None:
-        picker = PresetPicker(self.presets, self.library)
+        self._open_playlist()
+
+    def action_pick_default_playlist(self) -> None:
+        self._open_playlist(start_default=True)
+
+    def _open_playlist(self, *, start_default: bool = False) -> None:
+        picker = PresetPicker(self.presets, self.library, start_default=start_default)
 
         def chosen(preset: Preset | None) -> None:
             if preset is None or not self._output_ready():
