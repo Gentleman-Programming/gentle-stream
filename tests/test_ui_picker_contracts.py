@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import numpy as np
 import pytest
-from textual.widgets import Button, Input, OptionList, Select
+from textual.widgets import Button, Input, OptionList, Select, Tabs
 
 from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
 from gentle_stream.appearance_ui import SettingsScreen
@@ -147,10 +147,10 @@ async def test_flower_marks_existing_and_new_songs_in_all_playlist_views(ui):
         await pilot.press("p", "enter")
         await pilot.pause()
         options = app.screen.query_one("#presets", OptionList)
-        assert str(options.get_option_at_index(0).prompt).startswith("🌸  Legacy")
+        assert str(options.get_option_at_index(0).prompt).startswith("✿   Legacy")
         await pilot.press("backspace", "down", "enter")
         await pilot.pause()
-        assert str(options.get_option_at_index(0).prompt).startswith("🌸  Before")
+        assert str(options.get_option_at_index(0).prompt).startswith("✿   Before")
         await pilot.press("escape")
         await pilot.pause()  # Wait for the first modal to dismiss before reopening it.
         library.save("Test Group", "After", Style(bpm=90))
@@ -159,12 +159,12 @@ async def test_flower_marks_existing_and_new_songs_in_all_playlist_views(ui):
         await pilot.pause()
         options = app.screen.query_one("#presets", OptionList)  # New modal, not the dismissed one.
         assert options.option_count == 2
-        assert all(str(options.get_option_at_index(i).prompt).startswith("🌸  ") for i in range(2))
+        assert all(str(options.get_option_at_index(i).prompt).startswith("✿   ") for i in range(2))
         assert [song.name for song in library.list_songs("Test Group")] == ["After", "Before"]
         await pilot.press("right")
         await pilot.pause()
         assert options.option_count > 2
-        assert all(str(options.get_option_at_index(i).prompt).startswith("🌸  ")
+        assert all(str(options.get_option_at_index(i).prompt).startswith("✿   ")
                    for i in range(options.option_count))
         assert (store.path.read_bytes(), library.path.read_bytes()) == stored
         player.set_style.assert_not_called()
@@ -215,6 +215,103 @@ async def test_default_playlist_songs_have_one_visual_gap_without_changing_selec
         player.set_style.assert_called_once_with(styles[1])
         assert not store.path.exists() and not library.path.exists()
         shell.interpret_with_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_direct_default_order_matches_rendered_rows_and_repeat_index(ui, monkeypatch):
+    app, player, shell, store, library = ui
+    alpha = Style(name="alpha", mood="a long song description that wraps on a narrow screen")
+    beta = Style(name="Beta", mood="second")
+    zed = Style(name="Zed", mood="last")
+    monkeypatch.setattr("gentle_stream.app.default_playlist", lambda: (zed, beta, alpha))
+    async with app.run_test(size=(40, 16)) as pilot:
+        await pilot.press("l")
+        options = app.screen.query_one(OptionList)
+        assert options.option_count == 3 and options.highlighted == 0
+        assert [str(options.get_option_at_index(i).prompt) for i in range(3)] == [
+            f"✿   alpha — {alpha.mood}\n ", "✿   Beta — second\n ", "✿   Zed — last",
+        ]
+        lines = [options.render_line(i).text.strip() for i in range(options.content_region.height)]
+        beta_row = lines.index("✿   Beta — second")
+        assert beta_row > 2 and all(lines[:beta_row - 1]) and not lines[beta_row - 1]
+        await pilot.press("down", "c")
+        player.set_playlist.assert_called_once_with([alpha, beta, zed], start_index=1,
+                                                    name="Default playlist", continuous=True)
+        player.play.assert_called_once()
+    player.set_style.assert_not_called()
+    shell.interpret_with_usage.assert_not_called()
+    assert not store.path.exists() and not library.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_direct_default_tab_and_close_never_start_playback(ui):
+    app, player, shell, store, library = ui
+    saved, _ = store.save("Before", DEFAULT)
+    library.save("Night", "Song", DEFAULT)
+    stored = (store.path.read_bytes(), library.path.read_bytes())
+    async with app.run_test(size=(40, 16)) as pilot:
+        main = app.screen
+        status = shown(app, "#status")
+        await pilot.press("l")
+        picker = app.screen
+        assert isinstance(picker, PresetPicker)
+        tabs = picker.query_one(Tabs)
+        assert tabs.active == "default-playlist"
+        assert shown(app, "#presets-breadcrumb") == "Default playlist"
+        options = picker.query_one(OptionList)
+        assert options.has_focus and options.highlighted == 0
+        assert options.render_line(0).text.lstrip().startswith("✿   ")
+        await pilot.press("y", "enter")
+        assert app.screen is picker and tabs.active == "my-playlist"
+        assert shown(app, "#presets-breadcrumb") == "My playlist / Saved prompts"
+        assert str(options.get_option_at_index(0).prompt).startswith(f"✿   {saved.name} — ")
+        await pilot.press("y")  # An already active tab does not leave the group.
+        assert shown(app, "#presets-breadcrumb") == "My playlist / Saved prompts"
+        await pilot.press("l", "backspace", "delete")
+        assert app.screen is picker and tabs.active == "default-playlist"
+        assert shown(app, "#presets-breadcrumb") == "Default playlist"
+        close = picker.query_one("#modal-close", Button)
+        assert str(close.label) == "X Close" and "Esc" in close.tooltip
+        assert picker.children[0].region.contains_region(close.region)
+        assert await pilot.click("#modal-close")
+        assert app.screen is main
+        await pilot.press("p", "escape")
+        assert app.screen is main and shown(app, "#status") == status
+        await pilot.press("slash", "l")
+        assert app.query_one("#mood", Input).value == "l"
+        assert not isinstance(app.screen, PresetPicker)
+    player.set_style.assert_not_called()
+    player.set_playlist.assert_not_called()
+    player.play.assert_not_called()
+    shell.interpret_with_usage.assert_not_called()
+    assert (store.path.read_bytes(), library.path.read_bytes()) == stored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["click", "escape"])
+async def test_save_close_does_not_submit_the_form(ui, method):
+    app, player, shell, store, library = ui
+    async with app.run_test(size=(40, 16)) as pilot:
+        main = app.screen
+        status = shown(app, "#status")
+        await pilot.press("s")
+        assert isinstance(app.screen, SaveDialog)
+        field = app.screen.query_one("#save-name", Input)
+        assert field.has_focus
+        field.value = "Do not save"
+        if method == "click":
+            close = app.screen.query_one("#modal-close", Button)
+            assert str(close.label) == "X Close" and "Esc" in close.tooltip
+            assert app.screen.children[0].region.contains_region(close.region)
+            assert await pilot.click("#modal-close")
+        else:
+            await pilot.press("escape")
+        assert app.screen is main and shown(app, "#status") == status
+    assert not store.path.exists() and not library.path.exists()
+    player.set_style.assert_not_called()
+    player.set_playlist.assert_not_called()
+    player.play.assert_not_called()
+    shell.interpret_with_usage.assert_not_called()
 
 
 @pytest.mark.asyncio

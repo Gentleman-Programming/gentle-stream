@@ -20,10 +20,11 @@ CONTROLS = """controls:
            Enter switches without restarting the app; Esc closes before selection.
            System default follows the OS default without changing it.
   s        save what is playing: Saved prompts, new playlist, or existing playlist
-  p        Playlist (also on the command strip): My playlist / Default playlist
+           X Close or Esc cancels without saving
+  p        open My playlist (also on the command strip); l opens Default playlist directly
            My playlist opens groups, then songs in the same panel; Backspace goes back
-           Left/Right switch playlists; Up/Down highlight entries
-           click or Enter applies; d deletes only saved songs; Esc closes
+           Left/y and Right/l switch tabs; Up/Down highlight entries
+           click or Enter applies; d deletes only saved songs; X Close or Esc closes
   c        continuous playlist from the selected song; toggle off without restarting audio
            picker: c or Repeat from selection starts the full list at the highlighted song
   command strip: Panic, Save, repeat and Playlist left; Previous, Play/Pause and Next centered;

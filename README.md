@@ -215,9 +215,9 @@ without closing the UI.
 | `F2` / strip **Settings** | Settings: appearance, audio output and mood model; always available via `F2` |
 | `m` | Directly choose the model Gentle Shell uses (listed from `gentle-shell -- --list-models`); `Enter` picks, `Esc` keeps the current one |
 | `o` / **Audio output…** in Settings | Switch this app’s sounddevice output without restarting; `Enter` switches, `Esc` closes before selecting. **System default** uses the OS default without changing it. Not available with the WSL Windows audio bridge. |
-| `s` | Save the audible song to Saved prompts, new, or existing playlist; `Enter` saves, `Esc` cancels; replacement is scoped to that group |
-| `p` / strip **Playlist** | Open **My playlist** groups / **Default playlist**; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; `Esc` closes |
-| `c` / **↻ off/on** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
+| `s` | Save the audible song to Saved prompts, a new playlist, or an existing playlist; `Enter` saves, **X Close** or `Esc` cancels; replacement is scoped to that group |
+| `p` / `l` / strip **Playlist** | Open **My playlist** (`p`) or **Default playlist** (`l`) in the same picker; Left/Right switch tabs, click/Enter opens a group or applies a song; Backspace returns to groups; `d` / `Delete` removes only saved songs; **X Close** or `Esc` closes |
+| `c` / **⇄** | Toggle continuous playback from the selected song; in the picker, **Repeat from selection** starts at the highlighted song |
 | `+` / `-` | Volume up / down by 5% |
 | `↑` / `↓` | Volume up / down by 1% |
 | `b` | Back: leave the app and keep the music playing in the background |

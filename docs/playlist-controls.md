@@ -1,6 +1,6 @@
 # Save and repeat a playlist from your selected song
 
-Open **☰ Playlist** from the command strip above the mood input, or press **p**.
+Open **☰ Playlist** from the command strip above the mood input, or press **p** to open **My playlist**. Press **l** to open **Default playlist** directly.
 **!↺ Panic**, **▣↓ Save**, **⇄ Repeat** and **☰ Playlist** are on the left;
 **← Previous**, **Ⅱ / ▸ Play/Pause** and **→ Next** stay centered; **− / + volume**
 and **⛭ Settings** are on the right. The groups wrap on narrow terminals. Tab
@@ -15,7 +15,7 @@ See [Appearance settings](appearance.md) for preview, visibility and colors.
 
 ## Quick path
 
-Playlist opens with a separate title, description, My/Default tabs, breadcrumb and a hint below the song list. Save shows visible labels for the song and destination; choosing **New playlist…** reveals its playlist-name label and field together. Tab, arrows, Enter, Escape and the existing shortcuts still work, including in narrow terminals.
+Playlist opens with a separate title, description, My/Default tabs, breadcrumb and a hint below the song list. Save shows visible labels for the song and destination; choosing **New playlist…** reveals its playlist-name label and field together. Use **X Close** or **Esc** to dismiss either dialog without applying a song or saving. Tab, arrows, Enter and the other shortcuts still work, including in narrow terminals.
 
 1. Press **s** (or click **Save** on the command strip) to save the currently audible song. Enter a song name
    and choose **Saved prompts**, **New playlist…**, or an existing named playlist.
@@ -23,7 +23,7 @@ Playlist opens with a separate title, description, My/Default tabs, breadcrumb a
    playlist, Enter selects it, and Enter again saves. An existing selection
    focuses **Save** so the final Enter does not reopen the picker. **New playlist…**
    reveals and focuses its name field; Enter there saves. Clicking **Save** works too.
-2. Open **Playlist** from the strip or press **p**. Under **My playlist**, open **Saved prompts** or a named group. Songs appear in the same panel with a `🌸` marker on the left and one blank display row between entries, even when descriptions wrap. The marker and gap never become part of saved song names or selectable options. **< My playlists** / Backspace returns to groups; Left/Right switches the My/Default tabs.
+2. Open **Playlist** from the strip or press **p**. Under **My playlist**, open **Saved prompts** or a named group. Songs appear in the same panel with a `✿` marker on the left and one blank display row between entries, even when descriptions wrap. The marker and gap never become part of saved song names or selectable options. **< Back to groups** or **Backspace** returns to groups. **Left** or **y** selects My playlist; **Right** or **l** selects Default playlist.
 3. Highlight a song, then choose **Repeat from selection** or press **c**. Playback begins at that song, advances after each complete composition, and wraps in alphabetical display order. **Default playlist** works the same way but cannot be edited.
 4. Click **⇄ Repeat** while it is on, or press **c** outside the input to turn rotation off. Current audio is not cut or restarted. Already-buffered transitions may still be heard.
 

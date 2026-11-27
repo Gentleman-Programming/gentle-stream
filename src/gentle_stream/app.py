@@ -28,6 +28,7 @@ from textual.worker import get_current_worker
 from .appearance import Preferences, PreferenceStore
 from .appearance_ui import SettingsScreen
 from .device_ui import DevicePicker, missing_output
+from .modal_header import ModalHeader
 from .visualizer import Spectrum
 from .bridge import GentleShell, InterpretError, Usage
 from .client import PlayerError
@@ -138,14 +139,13 @@ class SaveDialog(ModalScreen[str | None]):
     DEFAULT_CSS = """
     SaveDialog { align: center middle; }
     SaveDialog > Vertical { width: 60; max-width: 100%; height: auto; max-height: 100%; overflow-y: auto;
-                            border: round $primary; padding: 1 2; background: $surface; }
-    SaveDialog .heading { color: $foreground; text-style: bold; margin-bottom: 1; }
+                            border: round $primary; padding: 0 1; background: $surface; }
     SaveDialog .field-label { color: $accent; }
     SaveDialog #save-submit { height: 1; min-height: 1; border: none; background: $primary;
-                             color: $background; text-style: bold; margin-top: 1; }
+                             color: $background; text-style: bold; }
     SaveDialog #save-submit:focus { text-style: bold; }
     SaveDialog #save-playlist, SaveDialog #save-playlist-label { display: none; }
-    SaveDialog #save-status { color: $text-muted; margin-top: 1; }
+    SaveDialog #save-status { color: $text-muted; }
     SaveDialog Input { border: round $panel; background: $surface; }
     SaveDialog Input:focus { border: round $primary; }
     """
@@ -159,7 +159,7 @@ class SaveDialog(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Save what is playing", classes="heading")
+            yield ModalHeader(Static("Save what is playing", classes="heading"), self.action_cancel)
             yield Static("Song name", id="save-name-label", classes="field-label")
             yield Input(self.initial, placeholder="Song name", max_length=NAME_MAX, id="save-name")
             yield Static("Destination", id="save-destination-label", classes="field-label")
@@ -193,8 +193,9 @@ class SaveDialog(ModalScreen[str | None]):
         self._save()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._save()
+        if event.button.id == "save-submit":
+            event.stop()
+            self._save()
 
     def _save(self) -> None:
         try:
@@ -220,33 +221,36 @@ class PresetPicker(ModalScreen[Preset | None]):
         Binding("d,delete", "delete", "Delete"),
         Binding("backspace", "groups", "Groups"),
         Binding("c", "continuous", "Continuous from selection"),
-        Binding("left", "switch_playlist('my-playlist')", "My playlist", priority=True),
-        Binding("right", "switch_playlist('default-playlist')", "Default playlist", priority=True),
+        Binding("left,y", "switch_playlist('my-playlist')", "My playlist", priority=True),
+        Binding("right,l", "switch_playlist('default-playlist')", "Default playlist", priority=True),
     ]
     DEFAULT_CSS = """
     PresetPicker { align: center middle; }
-    PresetPicker > Vertical { width: 72; max-width: 100%; height: 80%; border: round $primary; padding: 1 2;
+    PresetPicker > Vertical { width: 72; max-width: 100%; height: 90%; border: round $primary; padding: 0 1;
                               background: $surface; }
-    PresetPicker .heading { color: $foreground; text-style: bold; }
     PresetPicker #picker-description { color: $text-muted; }
-    PresetPicker Tabs { background: $surface; }
-    PresetPicker #presets-breadcrumb { color: $accent; }
-    PresetPicker #presets-status { color: $text-muted; margin-top: 1; }
+    PresetPicker Tabs, PresetPicker Underline { background: $surface; }
+    PresetPicker Tab.-active { color: $primary; text-style: bold; }
+    PresetPicker Tabs:focus Tab.-active { text-style: bold reverse; }
+    PresetPicker #presets-breadcrumb { color: $accent; text-style: bold; height: 1;
+                                      text-wrap: nowrap; text-overflow: ellipsis; }
+    PresetPicker #presets-status { color: $text-muted; max-height: 3; overflow-y: auto; }
     PresetPicker #picker-actions { height: 1; }
-    PresetPicker Button { height: 1; min-height: 1; width: auto; border: none; padding: 0 1; }
-    PresetPicker Button:focus { text-style: bold reverse; }
+    PresetPicker #picker-actions Button { height: 1; min-height: 1; min-width: 0; width: auto;
+                                         border: none; padding: 0 1; }
+    PresetPicker #picker-actions Button:focus { text-style: bold reverse; }
     PresetPicker OptionList, PresetPicker OptionList:focus { height: 1fr; min-height: 1; border: none;
                                                             background: $surface; }
     """
     EMPTY = "No saved prompts yet — press s to save what is playing"
 
-    def __init__(self, store: PresetStore, library: PlaylistLibrary | None = None):
+    def __init__(self, store: PresetStore, library: PlaylistLibrary | None = None, *, start_default: bool = False):
         super().__init__()
         self.store = store
         self.library = library if library is not None else PlaylistLibrary()
-        self.is_default = False
+        self.is_default = start_default
         self.group: str | None = None
-        self.at_groups = True
+        self.at_groups = not start_default
         self.groups: list[str | None] = []
         self.songs: list[Preset] = []
         self.selected_index = 0
@@ -258,15 +262,15 @@ class PresetPicker(ModalScreen[Preset | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Playlists", classes="heading")
+            yield ModalHeader(Static("Playlists", classes="heading"), self.action_cancel)
             yield Static("Generative styles · not recordings", id="picker-description")
-            yield Tabs(Tab("My playlist", id="my-playlist"),
-                       Tab("Default playlist", id="default-playlist"), active="my-playlist")
+            yield Tabs(Tab("My playlist", id="my-playlist"), Tab("Default playlist", id="default-playlist"),
+                       active="default-playlist" if self.is_default else "my-playlist")
             yield Static(id="presets-breadcrumb")
             yield OptionList(id="presets")
             yield Static(id="presets-status")
             with Horizontal(id="picker-actions"):
-                yield Button("< My playlists", id="playlist-back", tooltip="Back to groups (Backspace)")
+                yield Button("< Back to groups", id="playlist-back", tooltip="Back to groups (Backspace)")
                 yield Button("Repeat from selection", id="playlist-loop", tooltip="Continuous from selected song (c)")
 
     def on_mount(self) -> None:
@@ -276,8 +280,11 @@ class PresetPicker(ModalScreen[Preset | None]):
         self.query_one(Tabs).active = tab_id
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
-        self.is_default = event.tab.id == "default-playlist"
-        self.at_groups = not self.is_default
+        is_default = event.tab.id == "default-playlist"
+        if is_default == self.is_default:
+            return
+        self.is_default = is_default
+        self.at_groups = not is_default
         self.group = None
         self._populate()
 
@@ -302,15 +309,19 @@ class PresetPicker(ModalScreen[Preset | None]):
         if not self.at_groups:
             rows = []
             for i, song in enumerate(self.songs):
-                prompt = Text(f"🌸  {song.name} — {song.mood or song.style.summary()}")
+                prompt = Text(f"✿   {song.name} — {song.mood or song.style.summary()}")
                 if i + 1 < len(self.songs):
                     prompt.append("\n ")  # Keep a blank display row even when a description wraps.
                 rows.append(Option(prompt, id=f"song-{i}"))
             options.add_options(rows)
         if options.option_count:
             options.highlighted = 0
-        self.query_one("#presets-breadcrumb", Static).update(
-            Text("My playlists" if self.at_groups else f"My playlists / {self.selection_name}"))
+        breadcrumb = "My playlist"
+        if self.is_default:
+            breadcrumb = self.selection_name
+        elif not self.at_groups:
+            breadcrumb += f" / {self.selection_name}"
+        self.query_one("#presets-breadcrumb", Static).update(Text(breadcrumb))
         self.query_one("#playlist-back", Button).display = not self.at_groups and not self.is_default
         self.query_one("#playlist-loop", Button).disabled = self.at_groups or not self.songs
         self._show_status(error)
@@ -320,7 +331,9 @@ class PresetPicker(ModalScreen[Preset | None]):
         if error:
             text = f"[$error]{escape(error)}[/]"
         elif self.is_default:
-            text = "Click / Enter to apply · c repeat from selection · read-only · Esc closes"
+            # Keep a single hint row at 40 columns so wrapped songs still have room.
+            self.query_one("#presets-status", Static).update("Enter apply · c repeat · read-only")
+            return
         elif self.at_groups:
             text = "Click / Enter opens a group · Esc closes"
             if not self.store.list() and len(self.groups) == 1:
@@ -329,7 +342,7 @@ class PresetPicker(ModalScreen[Preset | None]):
             text = "Click / Enter to apply · c repeat · d deletes song · Backspace groups"
         else:
             text = self.EMPTY + " · try Default playlist"
-        self.query_one("#presets-status", Static).update(text + " · Left/Right switch playlists")
+        self.query_one("#presets-status", Static).update(text + " · ←/y My · →/l Default")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -475,6 +488,7 @@ class StreamApp(App):
         Binding("o", "pick_output", "Audio output", show=False),
         Binding("s", "save_preset", "Save", show=False),
         Binding("p", "pick_preset", "Playlist", show=False),
+        Binding("l", "pick_default_playlist", "Default playlist", show=False),
         Binding("c", "continuous", "Repeat list", show=False),
         Binding("plus,equals_sign", "volume(5)", "Vol +5", show=False),
         Binding("minus", "volume(-5)", "Vol -5", show=False),
@@ -522,7 +536,7 @@ class StreamApp(App):
                 yield Button("!↺", id="panic", tooltip="Hard cut and restart current track (F4); no AI call")
                 yield Button("▣↓", id="save-command", tooltip="Save audible song (s)")
                 yield Button("⇄", id="continuous", tooltip="Repeat: Off (c)")
-                yield Button("☰", id="playlist-command", tooltip="Browse playlists (p)")
+                yield Button("☰", id="playlist-command", tooltip="My playlist (p) · Default playlist (l)")
             yield Static(id="transport-offset")
             with Horizontal(id="transport"):
                 yield Button("←", id="previous", tooltip="Previous song in playlist (wraps to last)")
@@ -815,7 +829,13 @@ class StreamApp(App):
             action()
 
     def action_pick_preset(self) -> None:
-        picker = PresetPicker(self.presets, self.library)
+        self._open_playlist()
+
+    def action_pick_default_playlist(self) -> None:
+        self._open_playlist(start_default=True)
+
+    def _open_playlist(self, *, start_default: bool = False) -> None:
+        picker = PresetPicker(self.presets, self.library, start_default=start_default)
 
         def chosen(preset: Preset | None) -> None:
             if preset is None or not self._output_ready():
