@@ -13,7 +13,7 @@ The native Windows and macOS paths are terminal paths, not native desktop apps.
 | Choose a mood model | Press `m`, or choose **Choose model** in the command palette (`Ctrl+P`). |
 | Save the audible song | Press `s`, or choose **Save current prompt** in the command palette. Save to Saved prompts or a playlist. |
 | Recall a saved style | Press `p` for **My playlist** and **Default playlist**. See [playlist controls](playlist-controls.md) for Previous and repeat. |
-| Change appearance | Press `F2` for [Settings](appearance.md). Preview is temporary; **Save & close** keeps changes. |
+| Change appearance | Press `F2` for [Settings](appearance.md). The preview is temporary; **Save and Close** applies changes. |
 | Leave the terminal player | Press `b` to leave music playing in the background, or `q` to stop it and quit. |
 
 See the [terminal screenshot](../README.md#terminal-preview) and [all controls](../README.md#controls).

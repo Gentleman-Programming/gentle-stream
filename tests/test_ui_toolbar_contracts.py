@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 from textual.command import CommandPalette
-from textual.widgets import Button, Input, Switch
+from textual.widgets import Button, Checkbox, Input
 
 from gentle_stream import main
 from gentle_stream.app import ModelPicker, PresetPicker, SaveDialog, StreamApp
@@ -426,7 +426,7 @@ async def test_main_screen_renders_one_playlist_and_no_strip_bindings_in_footer(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 34), (80, 24), (180, 50)])
-async def test_compact_preview_gives_spectrum_more_room_without_hiding_chrome(ui, size):
+async def test_saved_compact_gives_spectrum_more_room_without_hiding_chrome(ui, size):
     app, player, shell, store, library = ui
     async with app.run_test(size=size) as pilot:
         root = app.screen
@@ -443,15 +443,17 @@ async def test_compact_preview_gives_spectrum_more_room_without_hiding_chrome(ui
         standard = layout()
         standard_theme = app.theme
         await pilot.press("f2")
-        app.screen.query_one("#pref-compact", Switch).value = True
-        await app.screen.submit("preview")
+        preview = app.screen.query_one('#appearance-preview')
+        original_padding = preview.styles.padding
+        app.screen.query_one('#appearance-compact', Checkbox).value = True
         await pilot.pause()
+        assert preview.styles.padding.left < original_padding.left
+        assert layout() == standard and not app.preference_store.path.exists()
+        assert await pilot.click('#appearance-save')
         compact = layout()
         assert compact.height > standard.height and compact.width > standard.width
         assert app.theme == standard_theme
-        await pilot.press("escape")
-        assert layout() == standard
-        assert not app.preferences.compact and not app.preference_store.path.exists()
+        assert app.preference_store.load().compact
         player.toggle.assert_not_called()
         player.set_style.assert_not_called()
         shell.interpret_with_usage.assert_not_called()
@@ -468,5 +470,7 @@ def test_cli_help_describes_the_rendered_controls(capsys):
     assert "Settings and volume right" in stdout
     assert "groups wrap on narrow terminals" in stdout
     assert "Compact gives the spectrum more room by trimming spacing, even on short terminals." in stdout
+    assert "F2       open Appearance Settings: draft preview, Audio → Output, and Models" in stdout
+    assert "Save and Close applies appearance; X Close or Esc confirms discarding edits." in stdout
     assert "gear opens Settings" not in stdout
 

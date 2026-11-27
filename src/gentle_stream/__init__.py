@@ -13,7 +13,7 @@ CONTROLS = """controls:
            recovery does not guarantee to fix stutter; reopen failures are shown, not Playing.
   /        describe a mood (feeling, concept, place...), Enter to send, Esc to leave
   Ctrl+P   open the command palette (also clickable in the header)
-  F2       Settings: live appearance, visibility, audio output, and mood model selection
+  F2       open Appearance Settings: draft preview, Audio → Output, and Models
            always available, even with hidden controls/input/footer; also in the command palette
   m        choose the model Gentle Shell uses directly
   o        choose this app's audio output (also in Settings)
@@ -34,7 +34,7 @@ CONTROLS = """controls:
             Select a song in Playlist first. No new key; this does not restart the current song.
   The model line shows the chosen model (or Gentle Shell default) and session usage.
   Compact gives the spectrum more room by trimming spacing, even on short terminals.
-  Settings: Preview is temporary; Save & close keeps changes; Close or Esc discards unsaved appearance changes.
+  Save and Close applies appearance; X Close or Esc confirms discarding edits.
   UI-only preferences live in appearance.json; visualizer changes never change audio parameters.
   / temporarily reveals hidden mood input without saving visibility. Fonts belong to the terminal.
   See docs/appearance.md for settings ranges and storage recovery.

@@ -18,6 +18,7 @@ from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.markup import escape
+from textual.message import Message
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -25,7 +26,7 @@ from textual.widgets import Button, Footer, Header, Input, OptionList, Select, S
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from .appearance import Preferences, PreferenceStore
+from .appearance import Preferences, PreferenceStore, background_color
 from .appearance_ui import SettingsScreen
 from .device_ui import DevicePicker, missing_output
 from .modal_header import ModalHeader
@@ -87,13 +88,18 @@ class ModelPicker(ModalScreen[str | None]):
     DEFAULT_CSS = """
     ModelPicker { align: center middle; }
     ModelPicker > Vertical { width: 60; max-width: 100%; height: auto; max-height: 80%;
-                             border: round $primary; padding: 1 2; background: $surface; }
-    ModelPicker .heading { color: $foreground; text-style: bold; }
+                             overflow-y: auto; border: round $primary; padding: 0 1; background: $surface; }
     ModelPicker #model-description { color: $text-muted; }
     ModelPicker #picker-status { color: $accent; margin-top: 1; }
     ModelPicker OptionList, ModelPicker OptionList:focus { height: auto; max-height: 20; border: none;
                                                           background: $surface; }
     """
+
+    class ListingFinished(Message, bubble=False):
+        def __init__(self, models: list[str], error: str | None = None):
+            super().__init__()
+            self.models = models
+            self.error = error
 
     def __init__(self, shell: GentleShell):
         super().__init__()
@@ -101,7 +107,7 @@ class ModelPicker(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Choose a mood model", classes="heading")
+            yield ModalHeader(Static("Model for mood interpretation", classes="heading"), self.action_dismiss_picker)
             yield Static("For future moods · music keeps playing", id="model-description")
             yield Static("Loading models…", id="picker-status")
             yield OptionList(Option(DEFAULT_MODEL_LABEL, id=""), id="models")
@@ -114,16 +120,25 @@ class ModelPicker(ModalScreen[str | None]):
     def _load(self) -> None:
         try:
             models = self.shell.list_models()
-        except InterpretError as e:
-            self.app.call_from_thread(self.query_one("#picker-status", Static).update, f"Could not list models: {escape(str(e))}")
-            return
-        self.app.call_from_thread(self._show, models)
+        except InterpretError as error:
+            result = self.ListingFinished([], str(error))
+        except Exception:
+            # Launcher failures must not take the player down.
+            result = self.ListingFinished([], 'check Gentle Shell and try again.')
+        else:
+            result = self.ListingFinished(models)
+        if not get_current_worker().is_cancelled:
+            self.post_message(result)
 
-    def _show(self, models: list[str]) -> None:
+    def on_model_picker_listing_finished(self, event: ListingFinished) -> None:
+        status = self.query_one('#picker-status', Static)
+        if event.error is not None:
+            status.update(Text(f'Could not list models: {event.error}'))
+            return
         options = self.query_one(OptionList)
-        options.add_options([Option(Text(m), id=m) for m in models])
+        options.add_options([Option(Text(model), id=model) for model in event.models])
         options.highlighted = 0
-        self.query_one("#picker-status", Static).update(Text(f"{len(models)} models · current: {model_label(self.shell.model)}"))
+        status.update(Text(f'{len(event.models)} models · current: {model_label(self.shell.model)}'))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id or None)
@@ -644,16 +659,14 @@ class StreamApp(App):
         self._w["status"].update(text)
         self._w["status"].tooltip = self._w["status"].render()
 
-    def apply_preferences(self, preferences: Preferences, *, persist: bool = False) -> None:
-        """The single UI-only apply path. Validate/save before changing any widget or timer."""
+    def apply_preferences(self, preferences: Preferences) -> None:
+        """Apply validated appearance without changing the music or the saved record."""
         preferences.validate()
-        if persist:
-            self.preference_store.save(preferences)
         self.preferences = preferences
         if not hasattr(self, '_root'):
             return
         p = preferences
-        background = {'black': '#000000', 'charcoal': '#202020'}.get(p.theme, p.background)
+        background = background_color(p)
         # Textual 8.2.8 doesn't invalidate CSS when the assigned theme name is unchanged.
         # Alternate two registered names, bounding the registry while forcing live refresh.
         theme_name = 'appearance-b' if self.theme == 'appearance-a' else 'appearance-a'
@@ -687,8 +700,16 @@ class StreamApp(App):
         self._show_model()
 
     def action_settings(self) -> None:
-        if not isinstance(self.screen, (SettingsScreen, DevicePicker)):
-            self.push_screen(SettingsScreen(self))
+        if isinstance(self.screen, ModalScreen):
+            return
+
+        def saved(preferences: Preferences | None) -> None:
+            if preferences is not None:
+                self.apply_preferences(preferences)
+
+        self.push_screen(SettingsScreen(self.preference_store, self.preference_store.load(),
+                                        lambda: model_label(self.shell.model), self.action_pick_model,
+                                        self.action_pick_output), saved)
 
     def get_system_commands(self, screen):
         from textual.app import SystemCommand
